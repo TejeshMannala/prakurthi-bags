@@ -106,7 +106,7 @@ const limiter = rateLimit({
 });
 app.use('/api/', limiter);
 const allowedOrigins = [
-  process.env.FRONTEND_URL || 'http://localhost:5000',
+  process.env.FRONTEND_URL,
 
   // Local Development
   'http://localhost:3000',
@@ -121,7 +121,10 @@ const allowedOrigins = [
   // Production
   'https://prakruthi-bags.vercel.app',
   'https://prakruthi-bags.netlify.app',
+  'https://prakurthi-bags.onrender.com',
+  'https://prakruthi-bags.onrender.com',
   /\.prakruthi-bags\.vercel\.app$/,
+  /\.onrender\.com$/,
 ].filter(Boolean);
 
 app.use(
@@ -133,7 +136,12 @@ app.use(
         if (o instanceof RegExp) return o.test(origin);
         return false;
       });
-      callback(null, allowed);
+      if (allowed) {
+        callback(null, true);
+      } else {
+        console.warn('[CORS] Blocked origin:', origin);
+        callback(new Error('Not allowed by CORS'));
+      }
     },
     credentials: true,
   })
@@ -223,6 +231,9 @@ app.get('/admin/*', (req, res) => {
 
 app.use(express.static(frontendBuild));
 app.get('*', (req, res) => {
+  if (req.path.startsWith('/api')) {
+    return res.status(404).json({ message: 'API route not found' });
+  }
   if (req.path === '/favicon.ico') {
     return res.status(204).end();
   }

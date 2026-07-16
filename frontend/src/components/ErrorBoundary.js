@@ -3,14 +3,14 @@ import React from 'react';
 class ErrorBoundary extends React.Component {
   constructor(props) {
     super(props);
-    this.state = { hasError: false, error: null, isChunkError: false };
+    this.state = { hasError: false, error: null, isChunkError: false, retryCount: 0 };
   }
 
   static getDerivedStateFromError(error) {
     const isChunkError = error.name === 'ChunkLoadError' ||
       error.message?.includes('Loading chunk') ||
       error.message?.includes('ChunkLoadError') ||
-      error.name === 'TypeError' && error.message?.includes('Failed to fetch dynamically imported module');
+      (error.name === 'TypeError' && error.message?.includes('Failed to fetch dynamically imported module'));
     return { hasError: true, error, isChunkError };
   }
 
@@ -19,9 +19,13 @@ class ErrorBoundary extends React.Component {
       console.error('[ErrorBoundary] Caught error:', error, errorInfo);
     }
     if (this.state.isChunkError) {
-      setTimeout(() => {
-        window.location.reload();
-      }, 1500);
+      const retries = this.state.retryCount;
+      if (retries < 2) {
+        setTimeout(() => {
+          this.setState({ retryCount: retries + 1, hasError: false, error: null });
+          window.location.reload();
+        }, 2000);
+      }
     }
   }
 
@@ -33,8 +37,19 @@ class ErrorBoundary extends React.Component {
             <div className="spinner" />
             <h3 style={{ marginTop: 20, color: '#374151' }}>Loading update...</h3>
             <p style={{ color: '#6b7280', fontSize: 14, marginTop: 8 }}>
-              A new version is available. Refreshing automatically...
+              {this.state.retryCount < 2 ? 'Refreshing to load latest version...' : 'Having trouble loading. Please try again.'}
             </p>
+            {this.state.retryCount >= 2 && (
+              <button
+                onClick={() => { this.setState({ retryCount: 0, hasError: false, error: null }); window.location.reload(); }}
+                style={{
+                  marginTop: 16, padding: '10px 24px', background: '#2E5A44', color: '#fff',
+                  border: 'none', borderRadius: 6, cursor: 'pointer', fontWeight: 600,
+                }}
+              >
+                Reload Page
+              </button>
+            )}
           </div>
         );
       }
@@ -59,15 +74,17 @@ class ErrorBoundary extends React.Component {
               {this.state.error.stack || this.state.error.message}
             </pre>
           )}
-          <button
-            onClick={() => window.location.reload()}
-            style={{
-              padding: '10px 24px', background: '#2E5A44', color: '#fff',
-              border: 'none', borderRadius: 6, cursor: 'pointer', fontWeight: 600,
-            }}
-          >
-            Reload Page
-          </button>
+          <div style={{ display: 'flex', gap: 12 }}>
+            <button
+              onClick={() => { this.setState({ hasError: false, error: null }); window.location.reload(); }}
+              style={{
+                padding: '10px 24px', background: '#2E5A44', color: '#fff',
+                border: 'none', borderRadius: 6, cursor: 'pointer', fontWeight: 600,
+              }}
+            >
+              Reload Page
+            </button>
+          </div>
         </div>
       );
     }

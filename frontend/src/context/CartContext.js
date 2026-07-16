@@ -129,11 +129,14 @@ export const CartProvider = ({ children }) => {
           }
         }
       } catch (err) {
+        const status = err?.response?.status;
         if (process.env.NODE_ENV !== 'production') {
-          console.warn('[CartContext] bootstrap session failed:', err?.response?.status || err?.response?.data?.message || err?.message);
+          console.warn('[CartContext] bootstrap session failed:', status || err?.response?.data?.message || err?.message);
         }
-        localStorage.removeItem('token');
-        dispatch({ type: 'SET_USER', payload: null });
+        if (status === 401 || status === 403 || !err?.response) {
+          localStorage.removeItem('token');
+          dispatch({ type: 'SET_USER', payload: null });
+        }
       } finally {
         didBootstrap.current = true;
         dispatch({ type: 'SET_SESSION_READY' });

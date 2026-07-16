@@ -17,8 +17,15 @@ export const SocketProvider = ({ children }) => {
     const token = localStorage.getItem('token');
     if (!token || !user) return;
 
+    let serverUrl;
     const apiUrl = (process.env.REACT_APP_API_URL || '').trim();
-    const serverUrl = apiUrl ? apiUrl.replace(/\/api\/?$/, '') : 'http://localhost:5000';
+    if (apiUrl) {
+      serverUrl = apiUrl.replace(/\/api\/?$/, '');
+    } else if (process.env.NODE_ENV === 'production') {
+      serverUrl = window.location.origin;
+    } else {
+      serverUrl = 'http://localhost:5000';
+    }
 
     const socket = io(serverUrl, {
       auth: { token },

@@ -1,8 +1,15 @@
 node_modules/
 .env
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
 build/
 dist/
 *.log
 .DS_Store
 __pycache__/
 *.pyc
+boot_err.txt
+boot_out.txt
+frontend/static.json

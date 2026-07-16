@@ -1,0 +1,38 @@
+services:
+  - type: web
+    name: prakurthi-bags
+    env: node
+    plan: free
+    buildCommand: >
+      cd backend && npm install &&
+      cd ../frontend && npm install && npm run build &&
+      cd ../admin-dashboard && npm install && npm run build
+    startCommand: cd backend && node server.js
+    autoDeploy: true
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: PORT
+        value: 5000
+      - key: MONGO_URI
+        sync: false
+      - key: JWT_SECRET
+        generateValue: true
+      - key: JWT_EXPIRE
+        value: 30d
+      - key: FRONTEND_URL
+        value: https://prakurthi-bags.onrender.com
+      - key: GOOGLE_CLIENT_ID
+        sync: false
+      - key: GOOGLE_CLIENT_SECRET
+        sync: false
+      - key: SMTP_HOST
+        value: smtp.gmail.com
+      - key: SMTP_PORT
+        value: 587
+      - key: SMTP_SECURE
+        value: "false"
+      - key: SMTP_USER
+        sync: false
+      - key: SMTP_PASS
+        sync: false
