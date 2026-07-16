@@ -118,11 +118,15 @@ const allowedOrigins = [
   'http://192.168.29.55:3000',
   'http://192.168.29.55:5173',
 
-  // Production
-  'https://prakruthi-bags.vercel.app',
-  'https://prakruthi-bags.netlify.app',
+  // Production - Render
   'https://prakurthi-bags.onrender.com',
   'https://prakruthi-bags.onrender.com',
+  'https://prakurthi-bags-1-frontend.onrender.com',
+  'https://prakruthi-bags-frontend.onrender.com',
+
+  // Production - Vercel / Netlify
+  'https://prakruthi-bags.vercel.app',
+  'https://prakruthi-bags.netlify.app',
   /\.prakruthi-bags\.vercel\.app$/,
   /\.onrender\.com$/,
 ].filter(Boolean);
@@ -225,6 +229,9 @@ const frontendBuild = path.join(__dirname, '..', 'frontend', 'build');
 const adminDist = path.join(__dirname, '..', 'admin-dashboard', 'dist');
 
 app.use('/admin', express.static(adminDist));
+app.get('/admin', (req, res) => {
+  res.sendFile(path.join(adminDist, 'index.html'));
+});
 app.get('/admin/*', (req, res) => {
   res.sendFile(path.join(adminDist, 'index.html'));
 });

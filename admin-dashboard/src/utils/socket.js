@@ -1,14 +1,20 @@
 import { io } from 'socket.io-client';
 
-// Singleton admin socket connection. Authenticates with the admin JWT so the
-// backend places this session in the `admin` room and pushes order/notification
-// /stats events in real time.
 let socket = null;
 
 export const getAdminSocket = () => {
   if (socket) return socket;
-  const base = import.meta.env.VITE_API_URL || 'http://localhost:5000';
-  const serverUrl = base.replace(/\/api\/?$/, '');
+
+  const envUrl = import.meta.env.VITE_API_URL;
+  let serverUrl;
+  if (envUrl && envUrl.trim()) {
+    serverUrl = envUrl.trim().replace(/\/api\/?$/, '');
+  } else if (typeof window !== 'undefined' && window.location.hostname !== 'localhost') {
+    serverUrl = window.location.origin;
+  } else {
+    serverUrl = 'http://localhost:5000';
+  }
+
   const token = localStorage.getItem('adminToken') || localStorage.getItem('token');
 
   socket = io(serverUrl, {
