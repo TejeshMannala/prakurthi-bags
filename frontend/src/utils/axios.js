@@ -1,12 +1,24 @@
 import axios from 'axios';
 
+// Normalize any configured API URL to a bare origin (no trailing slash, no
+// trailing /api). Every request path already begins with `/api/...`, so the
+// baseURL MUST be origin-only — otherwise we get `origin/api/api/...` 404s.
+// We strip any `/api` suffix here defensively so a misconfigured env var
+// (e.g. REACT_APP_API_URL=https://x.onrender.com/api) can never double up.
+const normalizeOrigin = (url) => {
+  if (!url) return '';
+  let u = url.trim().replace(/\/+$/, ''); // drop trailing slashes
+  u = u.replace(/\/api$/, ''); // drop a trailing /api if present
+  return u;
+};
+
 const getBaseURL = () => {
-  const envUrl = process.env.REACT_APP_API_URL;
-  if (envUrl && envUrl.trim()) return envUrl.trim();
+  const envUrl = normalizeOrigin(process.env.REACT_APP_API_URL);
+  if (envUrl) return envUrl;
   if (process.env.NODE_ENV === 'production') {
     return window.location.origin;
   }
-  return '';
+  return ''; // empty => CRA dev proxy forwards /api to localhost:5000
 };
 
 const api = axios.create({

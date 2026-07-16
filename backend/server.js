@@ -227,31 +227,46 @@ if (fs.existsSync(faviconPath)) {
 
 const frontendBuild = path.join(__dirname, '..', 'frontend', 'build');
 const adminDist = path.join(__dirname, '..', 'admin-dashboard', 'dist');
+const frontendPublic = path.join(__dirname, '..', 'frontend', 'public');
 
 app.use('/admin', express.static(adminDist));
 app.get('/admin', (req, res) => {
-  res.sendFile(path.join(adminDist, 'index.html'));
+  const adminIndex = path.join(adminDist, 'index.html');
+  if (fs.existsSync(adminIndex)) return res.sendFile(adminIndex);
+  res.status(404).send('Admin dashboard not built. Run: cd admin-dashboard && npm run build');
 });
 app.get('/admin/*', (req, res) => {
-  res.sendFile(path.join(adminDist, 'index.html'));
+  const adminIndex = path.join(adminDist, 'index.html');
+  if (fs.existsSync(adminIndex)) return res.sendFile(adminIndex);
+  res.status(404).send('Admin dashboard not built.');
 });
 
+// Serve frontend build assets (JS/CSS/images) and public static files
+// (favicon, manifest, robots.txt, etc.) from the SAME origin.
 app.use(express.static(frontendBuild));
+app.use(express.static(frontendPublic));
+
+// Catch-all SPA fallback: any non-API GET serves index.html so client-side
+// routes (/products, /cart, /profile, /admin...) survive a hard refresh.
 app.get('*', (req, res) => {
   if (req.path.startsWith('/api')) {
     return res.status(404).json({ message: 'API route not found' });
   }
   if (req.path === '/favicon.ico') {
+    const favicon = path.join(frontendPublic, 'favicon.ico');
+    if (fs.existsSync(favicon)) return res.sendFile(favicon);
     return res.status(204).end();
   }
   const indexHtml = path.join(frontendBuild, 'index.html');
   if (fs.existsSync(indexHtml)) {
-    res.sendFile(indexHtml);
-  } else if (fs.existsSync(path.join(adminDist, 'index.html'))) {
-    res.sendFile(path.join(adminDist, 'index.html'));
-  } else {
-    res.status(404).json({ message: 'Build not found. Run npm run build in frontend or admin-dashboard.' });
+    return res.sendFile(indexHtml);
   }
+  if (fs.existsSync(path.join(adminDist, 'index.html'))) {
+    return res.sendFile(path.join(adminDist, 'index.html'));
+  }
+  res.status(404).send(
+    'Build not found. Run `cd frontend && npm run build` (and `cd admin-dashboard && npm run build`).'
+  );
 });
 
 const desiredPort = parseInt(process.env.PORT || '5000', 10);

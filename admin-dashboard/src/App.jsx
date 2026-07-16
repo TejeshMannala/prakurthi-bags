@@ -21,28 +21,28 @@ import Payments from './pages/Payments';
 function App() {
   return (
     <Routes>
-      <Route path="/admin/login" element={<Login />} />
+      <Route path="/login" element={<Login />} />
       <Route element={<ProtectedRoute />}>
         <Route element={<AdminLayout />}>
-          <Route path="/admin" element={<Dashboard />} />
-          <Route path="/admin/dashboard" element={<Dashboard />} />
-          <Route path="/admin/products" element={<Products />} />
-          <Route path="/admin/orders" element={<Orders />} />
-          <Route path="/admin/users" element={<Users />} />
-          <Route path="/admin/coupons" element={<Coupons />} />
-          <Route path="/admin/support" element={<Support />} />
-          <Route path="/admin/reviews" element={<Reviews />} />
-          <Route path="/admin/returns" element={<Returns />} />
-          <Route path="/admin/faq" element={<FAQ />} />
-          <Route path="/admin/policies" element={<Policies />} />
-          <Route path="/admin/team" element={<Team />} />
-          <Route path="/admin/banners" element={<Banners />} />
-          <Route path="/admin/categories" element={<Categories />} />
-          <Route path="/admin/contact-info" element={<ContactInfo />} />
-          <Route path="/admin/payments" element={<Payments />} />
+          <Route path="/" element={<Dashboard />} />
+          <Route path="/dashboard" element={<Dashboard />} />
+          <Route path="/products" element={<Products />} />
+          <Route path="/orders" element={<Orders />} />
+          <Route path="/users" element={<Users />} />
+          <Route path="/coupons" element={<Coupons />} />
+          <Route path="/support" element={<Support />} />
+          <Route path="/reviews" element={<Reviews />} />
+          <Route path="/returns" element={<Returns />} />
+          <Route path="/faq" element={<FAQ />} />
+          <Route path="/policies" element={<Policies />} />
+          <Route path="/team" element={<Team />} />
+          <Route path="/banners" element={<Banners />} />
+          <Route path="/categories" element={<Categories />} />
+          <Route path="/contact-info" element={<ContactInfo />} />
+          <Route path="/payments" element={<Payments />} />
         </Route>
       </Route>
-      <Route path="*" element={<Navigate to="/admin" replace />} />
+      <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>
   );
 }

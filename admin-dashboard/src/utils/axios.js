@@ -1,8 +1,16 @@
 import axios from 'axios';
 
+// Bare-origin only: every endpoint path already starts with /api/... so the
+// baseURL must never include a trailing /api (otherwise /api/api/ 404s).
+const normalizeOrigin = (url) => {
+  if (!url) return '';
+  let u = url.trim().replace(/\/+$/, '');
+  return u.replace(/\/api$/, '');
+};
+
 const getBaseURL = () => {
-  const envUrl = import.meta.env.VITE_API_URL;
-  if (envUrl && envUrl.trim()) return envUrl.trim();
+  const envUrl = normalizeOrigin(import.meta.env.VITE_API_URL);
+  if (envUrl) return envUrl;
   if (typeof window !== 'undefined' && window.location.hostname !== 'localhost') {
     return window.location.origin;
   }

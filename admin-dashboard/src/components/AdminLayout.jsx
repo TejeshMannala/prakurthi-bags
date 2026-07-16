@@ -12,21 +12,21 @@ import { getAdminSocket, disconnectAdminSocket } from '../utils/socket';
 import { emitAdminRealtime } from '../utils/adminRealtime';
 
 const sidebarLinks = [
-  { to: '/admin', icon: FiGrid, label: 'Dashboard', end: true },
-  { to: '/admin/products', icon: FiPackage, label: 'Products' },
-  { to: '/admin/orders', icon: FiShoppingCart, label: 'Orders' },
-  { to: '/admin/payments', icon: FiCreditCard, label: 'Payments' },
-  { to: '/admin/users', icon: FiUsers, label: 'Users' },
-  { to: '/admin/support', icon: FiHeadphones, label: 'Support' },
-  { to: '/admin/returns', icon: FiRefreshCw, label: 'Returns' },
-  { to: '/admin/reviews', icon: FiStar, label: 'Reviews' },
-  { to: '/admin/faq', icon: FiHelpCircle, label: 'FAQ' },
-  { to: '/admin/policies', icon: FiFileText, label: 'Policies' },
-  { to: '/admin/categories', icon: FiLayers, label: 'Categories' },
-  { to: '/admin/team', icon: FiTeam, label: 'Team' },
-  { to: '/admin/banners', icon: FiImage, label: 'Banners' },
-  { to: '/admin/coupons', icon: FiPercent, label: 'Coupons' },
-  { to: '/admin/contact-info', icon: FiMail, label: 'Contact Info' },
+  { to: '/', icon: FiGrid, label: 'Dashboard', end: true },
+  { to: '/products', icon: FiPackage, label: 'Products' },
+  { to: '/orders', icon: FiShoppingCart, label: 'Orders' },
+  { to: '/payments', icon: FiCreditCard, label: 'Payments' },
+  { to: '/users', icon: FiUsers, label: 'Users' },
+  { to: '/support', icon: FiHeadphones, label: 'Support' },
+  { to: '/returns', icon: FiRefreshCw, label: 'Returns' },
+  { to: '/reviews', icon: FiStar, label: 'Reviews' },
+  { to: '/faq', icon: FiHelpCircle, label: 'FAQ' },
+  { to: '/policies', icon: FiFileText, label: 'Policies' },
+  { to: '/categories', icon: FiLayers, label: 'Categories' },
+  { to: '/team', icon: FiTeam, label: 'Team' },
+  { to: '/banners', icon: FiImage, label: 'Banners' },
+  { to: '/coupons', icon: FiPercent, label: 'Coupons' },
+  { to: '/contact-info', icon: FiMail, label: 'Contact Info' },
 ];
 
 function AdminLayout() {
@@ -107,7 +107,7 @@ function AdminLayout() {
   const handleLogout = () => {
     disconnectAdminSocket();
     localStorage.removeItem('adminToken');
-    navigate('/admin/login');
+    navigate('/login');
   };
 
   return (
@@ -172,7 +172,7 @@ function AdminLayout() {
         <div
           key={toast.id}
           onClick={() => {
-            if (toast.type === 'order') navigate('/admin/orders');
+            if (toast.type === 'order') navigate('/orders');
             setToast(null);
           }}
           style={{

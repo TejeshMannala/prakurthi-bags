@@ -26,7 +26,7 @@ function Login() {
     try {
       const { data } = await api.post('/api/admin/login', form);
       localStorage.setItem('adminToken', data.token);
-      navigate('/admin');
+      navigate('/');
     } catch (err) {
       setError(err.response?.data?.message || 'Invalid credentials');
     } finally {
