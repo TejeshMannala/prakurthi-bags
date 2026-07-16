@@ -1,0 +1,130 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer utilities {
+  .glassmorphism {
+    @apply bg-white/70 backdrop-blur-lg border border-white/30 shadow-lg;
+  }
+}
+
+* {
+  scrollbar-width: thin;
+  scrollbar-color: #d1d5db transparent;
+}
+
+html {
+  scroll-behavior: smooth;
+}
+
+/* Prevent horizontal scrolling across the app. `clip` (not `hidden`) avoids
+   creating a scroll container on <body>, so position: sticky elements
+   (navbar, sticky summaries) keep working relative to the viewport. */
+body {
+  overflow-x: clip;
+  width: 100%;
+}
+
+*::-webkit-scrollbar {
+  width: 6px;
+}
+
+*::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+*::-webkit-scrollbar-thumb {
+  background: #d1d5db;
+  border-radius: 10px;
+}
+
+*::-webkit-scrollbar-thumb:hover {
+  background: #9ca3af;
+}
+
+.hide-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+
+.hide-scrollbar {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+
+@keyframes shimmer {
+  0% { background-position: -200% 0; }
+  100% { background-position: 200% 0; }
+}
+
+.skeleton-shimmer {
+  background: linear-gradient(90deg, #f3f4f6 25%, #e5e7eb 50%, #f3f4f6 75%);
+  background-size: 200% 100%;
+  animation: shimmer 1.5s ease-in-out infinite;
+}
+
+@keyframes float {
+  0%, 100% { transform: translateY(0px); }
+  50% { transform: translateY(-8px); }
+}
+
+.animate-float {
+  animation: float 3s ease-in-out infinite;
+}
+
+@keyframes gradient-shift {
+  0% { background-position: 0% 50%; }
+  50% { background-position: 100% 50%; }
+  100% { background-position: 0% 50%; }
+}
+
+.animate-gradient {
+  background-size: 200% 200%;
+  animation: gradient-shift 3s ease infinite;
+}
+
+.line-clamp-1 {
+  overflow: hidden;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 1;
+}
+
+.line-clamp-2 {
+  overflow: hidden;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+
+.line-clamp-3 {
+  overflow: hidden;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+}
+
+/* Checkout validation + saved address styles */
+.input-error { border-color: #dc2626 !important; background: #fef2f2; }
+.field-error { display: block; color: #dc2626; font-size: 12px; margin-top: 4px; }
+.saved-address-card { border: 1px solid #e5e7eb; border-radius: 12px; padding: 12px 14px; cursor: pointer; transition: all .15s; background: #fff; }
+.saved-address-card.active { border-color: #2E5A44; box-shadow: 0 0 0 2px rgba(46,90,68,.15); }
+.saved-address-card:hover { border-color: #2E5A44; }
+.badge { display: inline-block; margin-left: 6px; font-size: 10px; font-weight: 700; color: #2E5A44; background: #e8f3ec; padding: 1px 6px; border-radius: 999px; }
+.link-btn { background: none; border: none; color: #2E5A44; font-weight: 600; cursor: pointer; display: inline-flex; align-items: center; gap: 4px; padding: 4px 0; }
+.icon-btn { background: none; border: none; color: #9ca3af; cursor: pointer; padding: 4px; }
+.icon-btn:hover { color: #dc2626; }
+
+/* Review modal */
+.review-modal-close { position: absolute; top: 16px; right: 16px; background: rgba(0,0,0,0.05); border: none; color: #6b7280; width: 34px; height: 34px; border-radius: 50%; cursor: pointer; display: flex; align-items: center; justify-content: center; transition: all .15s; }
+.review-modal-close:hover { background: rgba(0,0,0,0.1); color: #111827; }
+.review-add-img-btn { display: inline-flex; align-items: center; gap: 6px; padding: 0 14px; border-radius: 12px; border: 1px solid #e5e7eb; background: #fff; color: #374151; font-weight: 600; font-size: 13px; cursor: pointer; }
+.review-add-img-btn:hover { border-color: #7c3aed; color: #7c3aed; }
+.review-submit-btn { background: linear-gradient(90deg, #7c3aed, #2563eb); box-shadow: 0 10px 24px rgba(124,58,237,0.35); }
+
+/* Product card review icon */
+.review-fab { position: relative; background: rgba(255,255,255,0.7); backdrop-filter: blur(8px); border: 1px solid rgba(255,255,255,0.6); color: #7c3aed; width: 38px; height: 38px; border-radius: 50%; display: flex; align-items: center; justify-content: center; cursor: pointer; box-shadow: 0 6px 16px rgba(0,0,0,0.18); overflow: hidden; }
+.review-fab::after { content: ''; position: absolute; inset: 0; border-radius: 50%; background: rgba(124,58,237,0.4); transform: scale(0); opacity: 0; }
+.review-fab:active::after { animation: ripple 0.5s ease-out; }
+@keyframes ripple { 0% { transform: scale(0); opacity: 0.6; } 100% { transform: scale(2.2); opacity: 0; } }
+.review-fab .tip { position: absolute; bottom: 46px; left: 50%; transform: translateX(-50%); background: #111827; color: #fff; font-size: 11px; padding: 4px 8px; border-radius: 8px; white-space: nowrap; opacity: 0; pointer-events: none; transition: opacity .15s; }
+.review-fab:hover .tip { opacity: 1; }

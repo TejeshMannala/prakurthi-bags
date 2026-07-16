@@ -1,0 +1,78 @@
+import React from 'react';
+
+class ErrorBoundary extends React.Component {
+  constructor(props) {
+    super(props);
+    this.state = { hasError: false, error: null, isChunkError: false };
+  }
+
+  static getDerivedStateFromError(error) {
+    const isChunkError = error.name === 'ChunkLoadError' ||
+      error.message?.includes('Loading chunk') ||
+      error.message?.includes('ChunkLoadError') ||
+      error.name === 'TypeError' && error.message?.includes('Failed to fetch dynamically imported module');
+    return { hasError: true, error, isChunkError };
+  }
+
+  componentDidCatch(error, errorInfo) {
+    if (process.env.NODE_ENV !== 'production') {
+      console.error('[ErrorBoundary] Caught error:', error, errorInfo);
+    }
+    if (this.state.isChunkError) {
+      setTimeout(() => {
+        window.location.reload();
+      }, 1500);
+    }
+  }
+
+  render() {
+    if (this.state.hasError) {
+      if (this.state.isChunkError) {
+        return (
+          <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', minHeight: '60vh', padding: 24, textAlign: 'center' }}>
+            <div className="spinner" />
+            <h3 style={{ marginTop: 20, color: '#374151' }}>Loading update...</h3>
+            <p style={{ color: '#6b7280', fontSize: 14, marginTop: 8 }}>
+              A new version is available. Refreshing automatically...
+            </p>
+          </div>
+        );
+      }
+      return (
+        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', minHeight: '60vh', padding: 24, textAlign: 'center' }}>
+          <p style={{ color: '#6b7280', fontSize: 15, marginBottom: 8 }}>
+            Something went wrong while loading this section.
+          </p>
+          {process.env.NODE_ENV !== 'production' && this.state.error && (
+            <pre style={{
+              background: '#fef2f2',
+              border: '1px solid #fecaca',
+              borderRadius: 6,
+              padding: 12,
+              fontSize: 12,
+              maxWidth: '90vw',
+              overflow: 'auto',
+              marginBottom: 16,
+              textAlign: 'left',
+              color: '#991b1b',
+            }}>
+              {this.state.error.stack || this.state.error.message}
+            </pre>
+          )}
+          <button
+            onClick={() => window.location.reload()}
+            style={{
+              padding: '10px 24px', background: '#2E5A44', color: '#fff',
+              border: 'none', borderRadius: 6, cursor: 'pointer', fontWeight: 600,
+            }}
+          >
+            Reload Page
+          </button>
+        </div>
+      );
+    }
+    return this.props.children;
+  }
+}
+
+export default ErrorBoundary;

@@ -1,0 +1,17 @@
+✓ Redis Connected — caching enabled
+✓ JWT Loaded
+✓ Google OAuth Loaded
+✓ SMTP Email Loaded
+✓ Cloudinary Loaded
+✓ Redis Cache Loaded
+✓ Admin Auth Loaded
+Trying port 5001...
+✓ Server Running on port 5000
+✓ Health: http://localhost:5000/api/health
+✓ Server Running on port 5001
+✓ Health: http://localhost:5001/api/health
+✓ MongoDB Connected
+  Database: prakurthi-bags-
+  ✓ No orphan reviews to clean (purchase-gated reviews always carry an order reference)
+  Collection counts: {"Products":100,"Orders":5,"Coupons":5,"Reviews":1}
+✓ Ensured default CMS pages exist
