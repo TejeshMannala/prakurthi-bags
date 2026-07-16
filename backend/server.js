@@ -94,7 +94,16 @@ const server = http.createServer(app);
 setupSocket(server);
 
 app.use(compression());
-app.use(helmet({ crossOriginResourcePolicy: false, crossOriginEmbedderPolicy: false }));
+// Cross-Origin headers: keep resource policy open (so images/uploads load
+// cross-origin) and DO NOT set Cross-Origin-Opener-Policy, otherwise Google
+// Login's popup window.postMessage is blocked ("origin_mismatch"-like error).
+app.use(
+  helmet({
+    crossOriginResourcePolicy: false,
+    crossOriginEmbedderPolicy: false,
+    crossOriginOpenerPolicy: false,
+  })
+);
 app.use(mongoSanitize());
 
 const limiter = rateLimit({
