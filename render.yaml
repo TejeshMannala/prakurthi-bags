@@ -1,15 +1,16 @@
 # =============================================================================
 # Production deployment for Prakurthi Bags (MERN) on Render.
 #
-# Topology chosen: a SINGLE web service that builds AND serves BOTH the
-# customer frontend and the admin dashboard from the same origin
-# (https://prakurthi-bags.onrender.com). This eliminates cross-origin CORS
-# and "/api/api" duplication problems entirely, because the browser talks to
-# its own origin for both static assets and /api/* routes.
+# Topology: SINGLE web service that builds AND serves BOTH the customer
+# frontend and the admin dashboard from the same Express origin.
+# https://prakurthi-bags.onrender.com
 #
-# If you instead prefer separate static sites, set REACT_APP_API_URL (frontend)
-# and VITE_API_URL (admin) to the backend origin and deploy the static_site
-# blocks instead. The code already supports both via window.location.origin.
+# This eliminates cross-origin CORS and "/api/api" duplication because the
+# browser talks to its own origin for both static assets and /api/* routes.
+#
+# If you prefer separate static sites instead, set REACT_APP_API_URL and
+# VITE_API_URL to the backend origin and use Render's Static Site type.
+# The code already supports both via window.location.origin.
 # =============================================================================
 
 services:
@@ -17,13 +18,16 @@ services:
     name: prakurthi-bags
     env: node
     plan: free
-    # Build installs backend deps, then builds the frontend + admin so the
-    # backend can serve them from ./frontend/build and ./admin-dashboard/dist.
+    # Build the frontend and admin so Express can serve them.
+    # We use absolute paths ($RENDER_PROJECT_ROOT is the repo root) so
+    # directory navigation never fails on Render's build environment.
     buildCommand: |
-      cd backend && npm install
-      cd ../frontend && npm install && npm run build
-      cd ../admin-dashboard && npm install && npm run build
-    startCommand: cd backend && node server.js
+      npm --prefix backend install
+      npm --prefix frontend install
+      npm --prefix frontend run build
+      npm --prefix admin-dashboard install
+      npm --prefix admin-dashboard run build
+    startCommand: node backend/server.js
     autoDeploy: true
     healthCheckPath: /api/health
     envVars:
@@ -37,8 +41,6 @@ services:
         generateValue: true
       - key: JWT_EXPIRE
         value: 30d
-      # Same-origin deployment: frontend uses window.location.origin, so the
-      # API base is the backend origin itself. Leave these EMPTY on purpose.
       - key: FRONTEND_URL
         value: https://prakurthi-bags.onrender.com
       - key: ADMIN_URL
@@ -47,6 +49,5 @@ services:
         sync: false
       - key: GOOGLE_CLIENT_SECRET
         sync: false
-      # IMPORTANT: keep REACT_APP_API_URL and VITE_API_URL UNSET here so the
+      # IMPORTANT: keep REACT_APP_API_URL and VITE_API_URL UNSET so the
       # builds fall back to window.location.origin (same origin, no /api dup).
-      # If you DO set them, do NOT append /api — the code already strips it.
