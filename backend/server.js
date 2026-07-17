@@ -443,7 +443,7 @@ const startServer = (port) => {
   });
 
   process.on('SIGTERM', () => {
-    console.log('Shutting down gracefully...');
+     console.log('Shutting down gracefully...');
     server.close(() => process.exit(0));
   });
   process.on('SIGINT', () => {
@@ -459,30 +459,36 @@ startServer(desiredPort);
 setTimeout(async () => {
   const smtpUser = process.env.SMTP_USER || process.env.EMAIL_USER;
   const smtpPass = process.env.SMTP_PASS || process.env.EMAIL_PASS;
+  const smtpHost = process.env.SMTP_HOST || process.env.EMAIL_HOST || 'smtp.gmail.com';
+  const smtpPort = process.env.SMTP_PORT || process.env.EMAIL_PORT || '587';
   if (!smtpUser || !smtpPass) {
-    // console.error('');
-    // console.error('╔══════════════════════════════════════════════════════════╗');
-    // console.error('║  ⚠  SMTP NOT CONFIGURED — Forgot Password emails      ║');
-    // console.error('║  will NOT be delivered. Set these env vars:            ║');
-    // console.error('║                                                        ║');
-    // console.error('║  SMTP_USER (or EMAIL_USER) — your email address        ║');
-    // console.error('║  SMTP_PASS (or EMAIL_PASS) — 16-char App Password      ║');
-    // console.error('║                                                        ║');
-    // console.error('║  For Gmail: https://myaccount.google.com/apppasswords  ║');
-    // console.error('║  Required env vars: SMTP_HOST=smtp.gmail.com           ║');
-    // console.error('║                   SMTP_PORT=465                         ║');
-    // console.error('╚══════════════════════════════════════════════════════════╝');
-    // console.error('');
+     console.error('');
+     console.error('╔══════════════════════════════════════════════════════════╗');
+     console.error('║  ⚠  SMTP NOT CONFIGURED — Forgot Password emails      ║');
+     console.error('║  will NOT be delivered. Set these env vars:            ║');
+     console.error('║                                                        ║');
+     console.error('║  SMTP_USER (or EMAIL_USER) — your email address        ║');
+     console.error('║  SMTP_PASS (or EMAIL_PASS) — 16-char App Password      ║');
+     console.error('║                                                        ║');
+     console.error('║  For Gmail: https://myaccount.google.com/apppasswords  ║');
+     console.error('║  Required env vars: SMTP_HOST=smtp.gmail.com           ║');
+     console.error('║                   SMTP_PORT=587 or 465                 ║');
+     console.error('╚══════════════════════════════════════════════════════════╝');
+     console.error('');
     return;
   }
+  console.log(`[mailer] SMTP config: ${smtpHost}:${smtpPort} user=${smtpUser}`);
   try {
     const { verifyTransporter } = require('./utils/mailer');
     const result = await verifyTransporter();
     if (result.ok) {
-      console.log('  ✓ SMTP Email: connected and verified');
+      console.log(`  ✓ SMTP Email: connected and verified (${smtpHost}:${smtpPort})`);
     } else {
-      console.error('  ✗ SMTP Email: NOT connected —', result.reason || 'unknown error');
+      console.error(`  ✗ SMTP Email: NOT connected — ${result.reason || 'unknown error'} (${smtpHost}:${smtpPort})`);
       console.error('    Forgot Password / OTP emails WILL FAIL. Fix your SMTP env vars on Render.');
+      if (result.reason === 'NETWORK_ERROR') {
+        console.error('    TIP: If port 587 is blocked, try SMTP_PORT=465 (SSL) instead.');
+      }
     }
   } catch (e) {
     console.error('  ✗ SMTP Email: startup check error —', e.message);

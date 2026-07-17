@@ -107,6 +107,7 @@ const userSchema = new mongoose.Schema(
 );
 
 userSchema.index({ email: 1 });
+userSchema.index({ email: 1, otpExpires: -1 });
 userSchema.index({ otpExpires: 1 }, { expireAfterSeconds: 0 });
 userSchema.index({ createdAt: -1 });
 

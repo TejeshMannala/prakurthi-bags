@@ -1,13 +1,14 @@
 // Production-grade email helper.
-// Features: connection pooling, 3x retry with backoff, in-memory queue with
-// retry, classified failures (SMTP / AUTH / NETWORK / TIMEOUT / MISSING_ENV),
+// Features: NO pooling (direct connections — reliable on Render cold starts),
+// 3x retry with backoff, port fallback (587→465), in-memory queue with retry,
+// classified failures (SMTP / AUTH / NETWORK / TIMEOUT / MISSING_ENV),
 // and structured logging. Never throws to the caller — email must not break
 // the surrounding flow (e.g. an order still succeeds if the receipt fails).
 
 const nodemailer = require('nodemailer');
 
 const MAX_RETRIES = 3;
-const RETRY_BASE_DELAY = 600; // ms, exponential backoff base
+const RETRY_BASE_DELAY = 1000; // ms, exponential backoff base
 
 let cachedTransporter = null;
 let verificationState = { ok: null, reason: null, at: 0 };
@@ -22,48 +23,64 @@ const getCredentials = () => ({
   port: Number(process.env.SMTP_PORT || process.env.EMAIL_PORT || 587),
 });
 
-const createTransporter = () => {
-  if (cachedTransporter) return cachedTransporter;
-  const { user, pass, host, port } = getCredentials();
+const createTransporter = (portOverride) => {
+  if (cachedTransporter && !portOverride) return cachedTransporter;
+  const { user, pass, host } = getCredentials();
+  const port = portOverride || getCredentials().port;
   if (!user || !pass || /YOUR_|your_/.test(pass)) return null;
 
+  // No pooling — direct connections are more reliable for transactional
+  // email on Render free tier cold starts. Pooled connections go stale
+  // during the 15-min idle window and fail with NETWORK_ERROR.
   cachedTransporter = nodemailer.createTransport({
     host,
     port,
-    secure: port === 465, // 465 => implicit TLS, 587 => STARTTLS
+    secure: port === 465,
     requireTLS: port !== 465,
     auth: { user, pass },
-    pool: true, // connection pooling
-    maxConnections: 5,
-    maxMessages: 100,
-    rateLimit: 14, // ~14 messages / second ceiling (Gmail-friendly)
-    connectionTimeout: 10000,
-    greetingTimeout: 10000,
-    socketTimeout: 20000,
+    tls: { rejectUnauthorized: false },
+    // Significantly longer timeouts for Render free tier cold starts
+    // (backend wakes from sleep → DNS resolution → TCP → SMTP handshake)
+    connectionTimeout: 60000,
+    greetingTimeout: 30000,
+    socketTimeout: 60000,
   });
+  console.log(`[mailer] Transporter created: ${host}:${port} (secure=${port === 465})`);
   return cachedTransporter;
+};
+
+// Destroy cached transporter so next send creates a fresh connection.
+// Called on NETWORK_ERROR to avoid reusing a dead socket.
+const destroyTransporter = () => {
+  if (cachedTransporter) {
+    try { cachedTransporter.close(); } catch {}
+    cachedTransporter = null;
+    verificationState = { ok: null, reason: null, at: 0 };
+  }
 };
 
 // Classify a low-level SMTP/network error into a stable reason code.
 const classify = (err) => {
   const msg = (err && err.message) || '';
-  if (/ECONNREFUSED|ETIMEDOUT|ESOCKET|ECONNRESET|getaddrinfo|network|ENOTFOUND/i.test(msg) || err?.code === 'ETIMEDOUT' || err?.code === 'ECONNREFUSED') {
+  const code = err?.code || '';
+  if (/ECONNREFUSED|ETIMEDOUT|ESOCKET|ECONNRESET|getaddrinfo|network|ENOTFOUND|EAI_AGAIN|EHOSTUNREACH/i.test(msg) ||
+      code === 'ETIMEDOUT' || code === 'ECONNREFUSED' || code === 'ENOTFOUND' || code === 'EAI_AGAIN') {
     return 'NETWORK_ERROR';
   }
-  if (/timeout/i.test(msg)) return 'TIMEOUT';
-  if (/auth|535|incorrect authentication|username and password not accepted|bad sequence|534|5\.7\.9/i.test(msg)) {
+  if (/timeout|TIMED_OUT/i.test(msg)) return 'TIMEOUT';
+  if (/auth|535|incorrect authentication|username and password not accepted|bad sequence|534|5\.7\.9|Invalid login/i.test(msg)) {
     return 'AUTH_ERROR';
   }
   return 'SMTP_ERROR';
 };
 
-const verifyTransporter = async () => {
+const verifyTransporter = async (portOverride) => {
   const now = Date.now();
-  if (verificationState.ok !== null && now - verificationState.at < VERIFY_TTL) {
+  if (!portOverride && verificationState.ok !== null && now - verificationState.at < VERIFY_TTL) {
     return { ok: verificationState.ok, reason: verificationState.reason };
   }
   const { user, pass } = getCredentials();
-  const transporter = createTransporter();
+  const transporter = createTransporter(portOverride);
   if (!transporter) {
     const reason = !user || !pass ? 'MISSING_ENV' : 'AUTH_ERROR';
     verificationState = { ok: false, reason, at: now };
@@ -75,41 +92,59 @@ const verifyTransporter = async () => {
     return { ok: true, reason: null };
   } catch (err) {
     const reason = classify(err);
-    verificationState = { ok: false, reason, at: now };
-    console.error(`[mailer] SMTP verify failed (${reason}):`, err.message || err);
+    if (!portOverride) {
+      verificationState = { ok: false, reason, at: now };
+    }
+    console.error(`[mailer] SMTP verify failed (${reason}) on port ${getCredentials().port}${portOverride ? '→' + portOverride : ''}:`, err.code || '', err.message || err);
     return { ok: false, reason };
   }
 };
 
 const logReason = (reason) => {
+  const { host, port, user } = getCredentials();
   switch (reason) {
     case 'MISSING_ENV':
       console.error('[mailer] EMAIL NOT CONFIGURED — set SMTP_USER and SMTP_PASS (or EMAIL_USER and EMAIL_PASS) in Render dashboard env vars.');
       console.error('[mailer] For Gmail: use a 16-char App Password from https://myaccount.google.com/apppasswords');
-      console.error('[mailer] Required env vars: SMTP_HOST (default: smtp.gmail.com), SMTP_PORT (default: 465), SMTP_USER (your email), SMTP_PASS (app password)');
+      console.error('[mailer] Required env vars: SMTP_HOST (default: smtp.gmail.com), SMTP_PORT (default: 587), SMTP_USER (your email), SMTP_PASS (app password)');
       break;
     case 'AUTH_ERROR':
-      console.error('[mailer] SMTP AUTHENTICATION ERROR — verify SMTP_USER / SMTP_PASS. For Gmail use a 16-char App Password, not the account password.');
+      console.error('[mailer] SMTP AUTHENTICATION ERROR — verify SMTP_USER/SMTP_PASS. For Gmail use a 16-char App Password, not the account password.');
       break;
     case 'NETWORK_ERROR':
-      console.error('[mailer] SMTP NETWORK ERROR — cannot reach mail server (DNS/connection blocked / cold start). Will retry.');
+      console.error(`[mailer] SMTP NETWORK ERROR — cannot reach ${host}:${port}. Possible causes: Render cold start, DNS blocked, firewall, or SMTP port blocked.`);
+      console.error('[mailer] If using Gmail, try port 465 (SSL) instead of 587 (STARTTLS). Set SMTP_PORT=465 in Render env vars.');
       break;
     case 'TIMEOUT':
-      console.error('[mailer] SMTP TIMEOUT — mail server responded too slowly.');
+      console.error(`[mailer] SMTP TIMEOUT — ${host}:${port} responded too slowly.`);
       break;
     default:
       console.error('[mailer] SMTP ERROR — generic failure while sending.');
   }
 };
 
-// Send a single email with retry + backoff. Returns { ok, reason }.
+// Send a single email with retry + backoff + port fallback. Returns { ok, reason }.
 const sendEmail = async ({ to, subject, html, text }) => {
   if (!to) return { ok: false, reason: 'INVALID_RECIPIENT' };
 
   const verification = await verifyTransporter();
   if (!verification.ok) {
     logReason(verification.reason);
-    return { ok: false, reason: verification.reason };
+
+    // Port fallback: if NETWORK_ERROR on port 587, try port 465 (SSL)
+    if (verification.reason === 'NETWORK_ERROR' && getCredentials().port === 587) {
+      console.log('[mailer] Attempting port fallback: 587 (STARTTLS) → 465 (SSL)');
+      destroyTransporter();
+      const fallback = await verifyTransporter(465);
+      if (fallback.ok) {
+        verificationState = { ok: true, reason: null, at: Date.now() };
+        // Proceed with port 465 transporter
+      } else {
+        return { ok: false, reason: verification.reason };
+      }
+    } else {
+      return { ok: false, reason: verification.reason };
+    }
   }
 
   const transporter = cachedTransporter;
@@ -127,13 +162,15 @@ const sendEmail = async ({ to, subject, html, text }) => {
       return { ok: true, reason: null };
     } catch (err) {
       const reason = classify(err);
-      console.error(`[mailer] send attempt ${attempt}/${MAX_RETRIES} failed (${reason}):`, err.message || err);
+      console.error(`[mailer] send attempt ${attempt}/${MAX_RETRIES} failed (${reason}):`, err.code || '', err.message || err);
       if (attempt < MAX_RETRIES) {
-        await sleep(RETRY_BASE_DELAY * 2 ** (attempt - 1)); // 0.6s, 1.2s, 2.4s
+        const delay = RETRY_BASE_DELAY * 2 ** (attempt - 1); // 1s, 2s, 4s
+        console.log(`[mailer] Retrying in ${delay}ms...`);
+        await sleep(delay);
       } else {
         logReason(reason);
         // Force re-verify next time (SMTP session may be dead after cold start).
-        verificationState = { ok: null, reason: null, at: 0 };
+        destroyTransporter();
         return { ok: false, reason };
       }
     }

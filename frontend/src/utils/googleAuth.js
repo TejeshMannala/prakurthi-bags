@@ -12,6 +12,8 @@
 let scriptPromise = null;
 let initPromise = null;
 let clientIdCache = null;
+const CLIENT_ID_CACHE_KEY = 'google_client_id';
+const CLIENT_ID_CACHE_TTL = 24 * 60 * 60 * 1000; // 24 hours
 
 const loadGsiScript = () => {
   if (scriptPromise) return scriptPromise;
@@ -96,18 +98,42 @@ export const getGoogleClientId = () =>
 
 // Fetch the Google Client ID from the backend (preferred for production
 // where REACT_APP_GOOGLE_CLIENT_ID is not set at build time).
-let cachedClientId = null;
+// Uses localStorage caching to avoid redundant API calls on every mount.
+let fetchPromise = null;
 export const fetchGoogleClientId = async () => {
+  // Return in-memory cache instantly
   if (cachedClientId) return cachedClientId;
+
+  // Return localStorage cache if fresh
   try {
-    const { default: api } = await import('./axios');
-    const { data } = await api.get('/api/auth/google-config');
-    if (data.enabled && data.clientId) {
-      cachedClientId = data.clientId;
-      return data.clientId;
+    const cached = localStorage.getItem(CLIENT_ID_CACHE_KEY);
+    if (cached) {
+      const { clientId, ts } = JSON.parse(cached);
+      if (clientId && Date.now() - ts < CLIENT_ID_CACHE_TTL) {
+        cachedClientId = clientId;
+        return clientId;
+      }
+      localStorage.removeItem(CLIENT_ID_CACHE_KEY);
     }
-  } catch {
-    // fallback to env var
-  }
-  return getGoogleClientId();
+  } catch {}
+
+  // Deduplicate concurrent calls with a single in-flight promise
+  if (fetchPromise) return fetchPromise;
+  fetchPromise = (async () => {
+    try {
+      const { default: api } = await import('./axios');
+      const { data } = await api.get('/api/auth/google-config');
+      if (data.enabled && data.clientId) {
+        cachedClientId = data.clientId;
+        try {
+          localStorage.setItem(CLIENT_ID_CACHE_KEY, JSON.stringify({ clientId: data.clientId, ts: Date.now() }));
+        } catch {}
+        return data.clientId;
+      }
+    } catch {}
+    return getGoogleClientId();
+  })();
+  const result = await fetchPromise;
+  fetchPromise = null;
+  return result;
 };

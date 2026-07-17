@@ -40,9 +40,50 @@ const Login = () => {
 
   useEffect(() => {
     let active = true;
-    api.get('/api/auth/google-config')
-      .then(({ data }) => { if (active) setGoogleEnabled(!!data.enabled); })
-      .catch(() => { if (active) setGoogleEnabled(true); });
+    const initGoogle = async () => {
+      // Single API call: fetch both googleEnabled flag AND clientId in one request
+      // (previously made 2 separate calls, each blocked on Render cold start)
+      let clientId = getGoogleClientId();
+      if (!clientId) {
+        try {
+          const { data } = await api.get('/api/auth/google-config');
+          if (!active) return;
+          if (!data.enabled) { setGoogleEnabled(false); return; }
+          if (data.clientId) {
+            clientId = data.clientId;
+            // Cache for next mount
+            try { localStorage.setItem('google_client_id', JSON.stringify({ clientId, ts: Date.now() })); } catch {}
+          }
+        } catch { if (active) setGoogleEnabled(true); }
+      }
+      if (!clientId) {
+        clientId = await fetchGoogleClientId();
+      }
+      if (!clientId || !active) return;
+      // Fire-and-forget: don't block Login render on Google SDK load
+      preloadGoogleScript();
+      initGoogleIdentity({
+        clientId,
+        onCredential: (credential) => {
+          if (!active) return;
+          handleGoogleSuccess({ credential });
+        },
+        onError: (err) => {
+          if (!active) return;
+          handleGoogleError(err);
+        },
+      }).catch(() => {
+        if (active && !isOriginLocal) {
+          setGoogleError(
+            'Google sign-in is blocked for this origin (Error 400: origin_mismatch).\n\n' +
+            'Fix: in Google Cloud Console -> APIs & Services -> Credentials -> your Web application OAuth Client ID, add this EXACT origin under "Authorized JavaScript origins":\n\n' +
+            `${window.location.origin}\n\n` +
+            'Then hard-refresh this page.'
+          );
+        }
+      });
+    };
+    initGoogle();
     return () => { active = false; };
   }, []);
 
@@ -52,48 +93,6 @@ const Login = () => {
       return () => clearTimeout(timer);
     }
   }, [googleError]);
-
-  // Initialize Google Identity Services exactly ONCE (singleton in
-  // googleAuth.js). This prevents "google.accounts.id.initialize() called
-  // multiple times" and avoids duplicate backend login requests.
-  useEffect(() => {
-    let active = true;
-    const initGoogle = async () => {
-      // Try build-time env var first, then fall back to backend endpoint
-      let clientId = getGoogleClientId();
-      if (!clientId) {
-        clientId = await fetchGoogleClientId();
-      }
-      if (!clientId || !active) return;
-      // Preload the Google SDK script immediately so it's cached by the
-      // time the user clicks the Google button.
-      preloadGoogleScript();
-      try {
-        await initGoogleIdentity({
-          clientId,
-          onCredential: (credential) => {
-            if (!active) return;
-            handleGoogleSuccess({ credential });
-          },
-          onError: (err) => {
-            if (!active) return;
-            handleGoogleError(err);
-          },
-        });
-      } catch {
-        if (active && !isOriginLocal) {
-          setGoogleError(
-            'Google sign-in is blocked for this origin (Error 400: origin_mismatch).\n\n' +
-            'Fix: in Google Cloud Console -> APIs & Services -> Credentials -> your Web application OAuth Client ID, add this EXACT origin under "Authorized JavaScript origins":\n\n' +
-            `${window.location.origin}\n\n` +
-            'Then hard-refresh this page.'
-          );
-        }
-      }
-    };
-    initGoogle();
-    return () => { active = false; };
-  }, []);
 
   const handleChange = (e) => setForm({ ...form, [e.target.name]: e.target.value });
 
