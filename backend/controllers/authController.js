@@ -4,6 +4,7 @@ const jwt = require('jsonwebtoken');
 const { OAuth2Client } = require('google-auth-library');
 const User = require('../models/User');
 const Order = require('../models/Order');
+const { sendEmail } = require('../utils/mailer');
 
 const googleClientId = process.env.GOOGLE_CLIENT_ID;
 const googleClientSecret = process.env.GOOGLE_CLIENT_SECRET;
@@ -195,39 +196,32 @@ const forgotPassword = async (req, res) => {
     user.otpExpires = new Date(Date.now() + 10 * 60 * 1000);
     await user.save();
 
-    let transporter = null;
-    const smtpUser = process.env.SMTP_USER || process.env.EMAIL_USER;
-    const smtpPass = process.env.SMTP_PASS || process.env.EMAIL_PASS;
-    if (smtpUser && smtpPass && smtpPass !== 'YOUR_GMAIL_APP_PASSWORD' && smtpPass !== 'YOUR_CLIENT_SECRET') {
-      const nodemailer = require('nodemailer');
-      transporter = nodemailer.createTransport({
-        host: process.env.SMTP_HOST || process.env.EMAIL_HOST || 'smtp.gmail.com',
-        port: Number(process.env.SMTP_PORT || process.env.EMAIL_PORT || 587),
-        secure: false,
-        requireTLS: true,
-        auth: { user: smtpUser, pass: smtpPass },
-        connectionTimeout: 5000,
-        greetingTimeout: 5000,
-        socketTimeout: 10000,
-      });
-    }
-
-    if (!transporter) {
-      return res.status(500).json({ message: 'Email service is not available. Please try again later or contact support.' });
-    }
-
     try {
-      await transporter.sendMail({
-        from: `"Prakruthi Bags" <${smtpUser}>`,
+      const sent = await sendEmail({
         to: user.email,
         subject: 'Password Reset OTP - Prakruthi Bags',
         html: `<!DOCTYPE html><html><head><meta charset="utf-8"></head><body style="margin:0;padding:0;background-color:#f4f4f4;font-family:Arial,Helvetica,sans-serif"><table role="presentation" style="width:100%;max-width:520px;margin:40px auto;background:#ffffff;border-radius:12px;overflow:hidden;box-shadow:0 2px 12px rgba(0,0,0,0.08)"><tr><td style="background:#2E5A44;padding:28px 32px;text-align:center"><h1 style="margin:0;color:#ffffff;font-size:22px;font-weight:700">Prakruthi Bags</h1><p style="margin:4px 0 0;color:#A3C9A8;font-size:13px">Eco-friendly &middot; Handcrafted &middot; Premium</p></td></tr><tr><td style="padding:32px 32px 24px"><h2 style="margin:0 0 6px;color:#1a1a1a;font-size:18px">Password Reset Request</h2><p style="margin:0 0 20px;color:#555;font-size:14px;line-height:1.6">We received a request to reset your password. Use the OTP below to proceed. This is valid for <strong>10 minutes</strong>.</p><div style="background:#f0f7f1;border-radius:8px;padding:20px;text-align:center;margin-bottom:20px"><p style="margin:0 0 8px;color:#2E5A44;font-size:13px;font-weight:600;text-transform:uppercase;letter-spacing:1px">Your OTP</p><div style="font-size:38px;font-weight:700;color:#1a3a2a;letter-spacing:10px;font-family:monospace">${otp}</div></div><p style="margin:0;color:#888;font-size:12px;line-height:1.5">If you did not request this password reset, please ignore this email or contact our support team.</p></td></tr><tr><td style="padding:16px 32px;background:#fafafa;border-top:1px solid #e8e8e8"><p style="margin:0;color:#999;font-size:11px;text-align:center">&copy; ${new Date().getFullYear()} Prakruthi Bags. All rights reserved.</p></td></tr></table></body></html>`,
       });
+
+      if (!sent) {
+        // Roll back the OTP so a later retry can generate a fresh one.
+        user.otp = undefined;
+        user.otpExpires = undefined;
+        await user.save();
+        return res.status(503).json({
+          message: 'Failed to send OTP email. The email service is currently unavailable. Please try again later or contact support.',
+          code: 'EMAIL_FAILED',
+        });
+      }
     } catch (emailError) {
       user.otp = undefined;
       user.otpExpires = undefined;
       await user.save();
-      return res.status(500).json({ message: 'Failed to send OTP email. Please try again later.' });
+      console.error('[forgotPassword] Unexpected email error:', emailError?.message || emailError);
+      return res.status(503).json({
+        message: 'Failed to send OTP email. Please try again later.',
+        code: 'EMAIL_FAILED',
+      });
     }
 
     res.status(200).json({ message: 'OTP sent to your email. It expires in 10 minutes.' });

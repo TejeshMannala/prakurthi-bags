@@ -24,11 +24,56 @@ const createTransporter = () => {
   return cachedTransporter;
 };
 
-const sendEmail = async ({ to, subject, html, text }) => {
+// Verifies the SMTP connection once. Returns { ok, reason, error }.
+const verifyTransporter = async () => {
+  const transporter = createTransporter();
+  if (!transporter) {
+    const user = process.env.SMTP_USER || process.env.EMAIL_USER;
+    const pass = process.env.SMTP_PASS || process.env.EMAIL_PASS;
+    if (!user || !pass) {
+      return { ok: false, reason: 'MISSING_ENV', error: new Error('SMTP credentials are not set (SMTP_USER / SMTP_PASS).') };
+    }
+    return { ok: false, reason: 'AUTH_ERROR', error: new Error('SMTP credentials contain placeholder values.') };
+  }
   try {
-    const transporter = createTransporter();
-    if (!transporter) return false;
-    if (!to) return false;
+    await transporter.verify();
+    return { ok: true };
+  } catch (err) {
+    const msg = err.message || '';
+    let reason = 'SMTP_ERROR';
+    if (/ECONNREFUSED|ETIMEDOUT|ESOCKET|ECONNRESET|getaddrinfo|network/i.test(msg) || err.code === 'ETIMEDOUT' || err.code === 'ECONNREFUSED') {
+      reason = 'NETWORK_ERROR';
+    } else if (/timeout/i.test(msg)) {
+      reason = 'TIMEOUT';
+    } else if (/auth|535|incorrect authentication|username and password not accepted|bad sequence/i.test(msg)) {
+      reason = 'AUTH_ERROR';
+    }
+    if (process.env.NODE_ENV !== 'production') {
+      console.warn(`[mailer] SMTP verify failed (${reason}):`, msg);
+    }
+    return { ok: false, reason, error: err };
+  }
+};
+
+const sendEmail = async ({ to, subject, html, text }) => {
+  const verification = await verifyTransporter();
+  if (!verification.ok) {
+    const reason = verification.reason;
+    if (reason === 'MISSING_ENV') {
+      console.error('[mailer] EMAIL NOT CONFIGURED — set SMTP_USER and SMTP_PASS in environment.');
+    } else if (reason === 'AUTH_ERROR') {
+      console.error('[mailer] SMTP AUTHENTICATION ERROR — check SMTP_USER / SMTP_PASS (use a Gmail App Password).');
+    } else if (reason === 'NETWORK_ERROR') {
+      console.error('[mailer] SMTP NETWORK ERROR — cannot reach mail server (DNS/connection blocked).');
+    } else if (reason === 'TIMEOUT') {
+      console.error('[mailer] SMTP TIMEOUT — mail server responded too slowly.');
+    } else {
+      console.error('[mailer] SMTP ERROR —', verification.error?.message || 'unknown');
+    }
+    return false;
+  }
+  if (!to) return false;
+  try {
     await transporter.sendMail({
       from: `"Prakruthi Bags" <${process.env.SMTP_USER || process.env.EMAIL_USER}>`,
       to,
@@ -38,8 +83,15 @@ const sendEmail = async ({ to, subject, html, text }) => {
     });
     return true;
   } catch (err) {
-    if (process.env.NODE_ENV !== 'production') {
-      console.warn('[mailer] send failed:', err.message);
+    const msg = err.message || '';
+    if (/ECONNREFUSED|ETIMEDOUT|ESOCKET|ECONNRESET|getaddrinfo|network/i.test(msg) || err.code === 'ETIMEDOUT' || err.code === 'ECONNREFUSED') {
+      console.error('[mailer] NETWORK ERROR while sending:', msg);
+    } else if (/timeout/i.test(msg)) {
+      console.error('[mailer] TIMEOUT while sending:', msg);
+    } else if (/auth|535|incorrect authentication|username and password not accepted/i.test(msg)) {
+      console.error('[mailer] AUTHENTICATION ERROR while sending:', msg);
+    } else {
+      console.error('[mailer] send failed:', msg);
     }
     return false;
   }

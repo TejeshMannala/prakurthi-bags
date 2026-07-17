@@ -216,10 +216,37 @@ app.use('/api', (req, res) => {
 });
 
 app.use((err, req, res, next) => {
-  console.error('Unhandled error:', err.stack || err.message || err);
+  // Centralized error handler: logs with context and returns a meaningful,
+  // JSON error (never an HTML stack trace) so the frontend can show a clear
+  // message instead of a generic 500.
   const statusCode = err.statusCode || 500;
+  let message = err.message || 'Internal server error.';
+  let code = err.code || null;
+
+  const errMsg = err.message || '';
+  if (statusCode === 500) {
+    if (/ECONNREFUSED|ETIMEDOUT|ESOCKET|ECONNRESET|getaddrinfo|network/i.test(errMsg) || err.code === 'ETIMEDOUT' || err.code === 'ECONNREFUSED') {
+      statusCode = 503; message = 'Service temporarily unavailable. Please try again shortly.'; code = 'NETWORK_ERROR';
+    } else if (/Cast to ObjectId failed|CastError/i.test(errMsg)) {
+      statusCode = 400; message = 'Invalid identifier provided.'; code = 'INVALID_ID';
+    } else if (/duplicate key|E11000/i.test(errMsg)) {
+      statusCode = 409; message = 'A record with this value already exists.'; code = 'DUPLICATE';
+    } else if (/validation failed|ValidationError/i.test(errMsg)) {
+      statusCode = 400; message = 'Validation failed. Please check your input.'; code = 'VALIDATION_ERROR';
+    } else if (/jwt|token/i.test(errMsg)) {
+      statusCode = 401; message = 'Invalid or expired token.'; code = 'INVALID_TOKEN';
+    }
+  }
+
+  const logLevel = statusCode >= 500 ? 'error' : 'warn';
+  console[logLevel](
+    `[${req.method} ${req.originalUrl}] -> ${statusCode} ${code || ''}`.trim(),
+    statusCode >= 500 ? (err.stack || err.message) : ''
+  );
+
   res.status(statusCode).json({
-    message: err.message || 'Internal server error.',
+    message,
+    ...(code && { code }),
     ...(process.env.NODE_ENV === 'development' && { stack: err.stack }),
   });
 });
