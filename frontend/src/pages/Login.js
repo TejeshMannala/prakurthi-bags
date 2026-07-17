@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { Link, useNavigate, useLocation } from 'react-router-dom';
-import { GoogleLogin } from '@react-oauth/google';
+import { initGoogleIdentity, promptGoogleCredential, getGoogleClientId } from '../utils/googleAuth';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useDispatch } from 'react-redux';
 import { FaLeaf } from 'react-icons/fa';
@@ -52,6 +52,36 @@ const Login = () => {
       return () => clearTimeout(timer);
     }
   }, [googleError]);
+
+  // Initialize Google Identity Services exactly ONCE (singleton in
+  // googleAuth.js). This prevents "google.accounts.id.initialize() called
+  // multiple times" and avoids duplicate backend login requests.
+  useEffect(() => {
+    const clientId = getGoogleClientId();
+    if (!clientId) return;
+    let active = true;
+    initGoogleIdentity({
+      clientId,
+      onCredential: (credential) => {
+        if (!active) return;
+        handleGoogleSuccess({ credential });
+      },
+      onError: (err) => {
+        if (!active) return;
+        handleGoogleError(err);
+      },
+    }).catch(() => {
+      if (active && !isOriginLocal) {
+        setGoogleError(
+          'Google sign-in is blocked for this origin (Error 400: origin_mismatch).\n\n' +
+          'Fix: in Google Cloud Console -> APIs & Services -> Credentials -> your Web application OAuth Client ID, add this EXACT origin under "Authorized JavaScript origins":\n\n' +
+          `${window.location.origin}\n\n` +
+          'Then hard-refresh this page.'
+        );
+      }
+    });
+    return () => { active = false; };
+  }, []);
 
   const handleChange = (e) => setForm({ ...form, [e.target.name]: e.target.value });
 
@@ -323,21 +353,41 @@ const Login = () => {
                   <span style={{ flex: 1, height: 1, background: '#e5e7eb' }} />
                 </div>
                 <div style={{ position: 'relative', display: 'inline-flex' }}>
-                  <GoogleLogin
-                    onSuccess={handleGoogleSuccess}
-                    onError={handleGoogleError}
-                    size="large"
-                    theme="outline"
-                    text="continue_with"
-                    shape="rectangular"
-                    width="310"
-                    locale="en"
-                  />
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (googleSubmitting.current) return;
+                      googleSubmitting.current = true;
+                      setGoogleLoading(true);
+                      setGoogleError('');
+                      try {
+                        promptGoogleCredential();
+                        // Safety: if no credential arrives shortly, release the guard.
+                        setTimeout(() => {
+                          googleSubmitting.current = false;
+                          setGoogleLoading(false);
+                        }, 60000);
+                      } catch {
+                        googleSubmitting.current = false;
+                        setGoogleLoading(false);
+                      }
+                    }}
+                    className="auth-google-btn"
+                    aria-label="Continue with Google"
+                  >
+                    <svg width="18" height="18" viewBox="0 0 48 48" aria-hidden="true" style={{ flexShrink: 0 }}>
+                      <path fill="#EA4335" d="M24 9.5c3.54 0 6.71 1.22 9.21 3.6l6.85-6.85C35.9 2.38 30.47 0 24 0 14.62 0 6.51 5.38 2.56 13.22l7.98 6.19C12.43 13.72 17.74 9.5 24 9.5z" />
+                      <path fill="#4285F4" d="M46.98 24.55c0-1.57-.15-3.09-.38-4.55H24v9.02h12.94c-.58 2.96-2.26 5.48-4.78 7.18l7.73 6.01C46.44 38.04 48 31.51 48 24.55z" />
+                      <path fill="#FBBC05" d="M10.53 28.59c-.48-1.45-.76-2.99-.76-4.59s.27-3.14.76-4.59l-7.98-6.19C.92 16.46 0 20.12 0 24c0 3.88.92 7.54 2.56 10.78l7.97-6.19z" />
+                      <path fill="#34A853" d="M24 48c6.48 0 11.93-2.13 15.89-5.81l-7.73-6.01c-2.15 1.45-4.92 2.3-8.16 2.3-6.26 0-11.57-4.22-13.47-9.91l-7.98 6.19C6.51 42.62 14.62 48 24 48z" />
+                    </svg>
+                    <span>Continue with Google</span>
+                  </button>
                   {googleLoading && (
                     <div style={{
                       position: 'absolute',
                       inset: 0,
-                      borderRadius: 50,
+                      borderRadius: 8,
                       background: 'rgba(255,255,255,0.7)',
                       display: 'flex',
                       alignItems: 'center',
@@ -494,6 +544,33 @@ const Login = () => {
         }
 
         .auth-submit-btn:disabled {
+          opacity: 0.7;
+          cursor: not-allowed;
+        }
+
+        .auth-google-btn {
+          display: inline-flex;
+          align-items: center;
+          justify-content: center;
+          gap: 10px;
+          width: 310px;
+          max-width: 100%;
+          padding: 12px 16px;
+          background: #fff;
+          color: #3c4043;
+          font-size: 15px;
+          font-weight: 600;
+          font-family: inherit;
+          border: 1px solid #dadce0;
+          border-radius: 8px;
+          cursor: pointer;
+          transition: box-shadow 0.2s, background 0.2s;
+        }
+        .auth-google-btn:hover:not(:disabled) {
+          box-shadow: 0 1px 6px rgba(60,64,67,0.25);
+          background: #f8f9fa;
+        }
+        .auth-google-btn:disabled {
           opacity: 0.7;
           cursor: not-allowed;
         }

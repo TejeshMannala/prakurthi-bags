@@ -175,60 +175,83 @@ const googleLogin = async (req, res) => {
   }
 };
 
-const forgotPassword = async (req, res) => {
+// Shared OTP dispatch used by both POST /api/auth/forgot-password and
+// POST /api/auth/send-otp. Generates a secure OTP, stores a bcrypt hash with
+// a 10-minute expiry (no duplicate OTP while one is still valid), and emails it
+// via the pooled/retry-enabled mailer. Returns a consistent JSON envelope.
+const sendOtp = async (req, res) => {
   try {
     const { email } = req.body;
 
     if (!email || !isValidEmail(email)) {
-      return res.status(400).json({ message: 'Invalid Email Address' });
+      return res.status(400).json({ success: false, error: 'Invalid email address.' });
     }
 
     const user = await User.findOne({ email: email.toLowerCase().trim() });
     if (!user) {
-      return res.status(404).json({ message: 'Email not found' });
+      // Do not reveal whether an email exists (avoid account enumeration).
+      return res.status(200).json({
+        success: true,
+        message: 'If this email is registered, an OTP has been sent. It expires in 10 minutes.',
+      });
     }
 
-    const otp = Math.floor(100000 + Math.random() * 900000).toString();
-    const salt = await bcrypt.genSalt(10);
-    const hashedOtp = await bcrypt.hash(otp, salt);
+    // Reuse an unexpired OTP instead of generating duplicates.
+    let otp = user.otp && user.otpExpires && Date.now() < new Date(user.otpExpires).getTime()
+      ? user._plainOtp
+      : null;
 
-    user.otp = hashedOtp;
-    user.otpExpires = new Date(Date.now() + 10 * 60 * 1000);
-    await user.save();
+    if (!otp) {
+      otp = Math.floor(100000 + Math.random() * 900000).toString();
+      const salt = await bcrypt.genSalt(10);
+      const hashedOtp = await bcrypt.hash(otp, salt);
+      user.otp = hashedOtp;
+      user.otpExpires = new Date(Date.now() + 10 * 60 * 1000);
+      user._plainOtp = otp; // temporary in-memory only, never persisted
+      await user.save();
+    }
 
-    try {
-      const sent = await sendEmail({
-        to: user.email,
-        subject: 'Password Reset OTP - Prakruthi Bags',
-        html: `<!DOCTYPE html><html><head><meta charset="utf-8"></head><body style="margin:0;padding:0;background-color:#f4f4f4;font-family:Arial,Helvetica,sans-serif"><table role="presentation" style="width:100%;max-width:520px;margin:40px auto;background:#ffffff;border-radius:12px;overflow:hidden;box-shadow:0 2px 12px rgba(0,0,0,0.08)"><tr><td style="background:#2E5A44;padding:28px 32px;text-align:center"><h1 style="margin:0;color:#ffffff;font-size:22px;font-weight:700">Prakruthi Bags</h1><p style="margin:4px 0 0;color:#A3C9A8;font-size:13px">Eco-friendly &middot; Handcrafted &middot; Premium</p></td></tr><tr><td style="padding:32px 32px 24px"><h2 style="margin:0 0 6px;color:#1a1a1a;font-size:18px">Password Reset Request</h2><p style="margin:0 0 20px;color:#555;font-size:14px;line-height:1.6">We received a request to reset your password. Use the OTP below to proceed. This is valid for <strong>10 minutes</strong>.</p><div style="background:#f0f7f1;border-radius:8px;padding:20px;text-align:center;margin-bottom:20px"><p style="margin:0 0 8px;color:#2E5A44;font-size:13px;font-weight:600;text-transform:uppercase;letter-spacing:1px">Your OTP</p><div style="font-size:38px;font-weight:700;color:#1a3a2a;letter-spacing:10px;font-family:monospace">${otp}</div></div><p style="margin:0;color:#888;font-size:12px;line-height:1.5">If you did not request this password reset, please ignore this email or contact our support team.</p></td></tr><tr><td style="padding:16px 32px;background:#fafafa;border-top:1px solid #e8e8e8"><p style="margin:0;color:#999;font-size:11px;text-align:center">&copy; ${new Date().getFullYear()} Prakruthi Bags. All rights reserved.</p></td></tr></table></body></html>`,
-      });
+    const { ok, reason } = await sendEmail({
+      to: user.email,
+      subject: 'Password Reset OTP - Prakruthi Bags',
+      html: `<!DOCTYPE html><html><head><meta charset="utf-8"></head><body style="margin:0;padding:0;background-color:#f4f4f4;font-family:Arial,Helvetica,sans-serif"><table role="presentation" style="width:100%;max-width:520px;margin:40px auto;background:#ffffff;border-radius:12px;overflow:hidden;box-shadow:0 2px 12px rgba(0,0,0,0.08)"><tr><td style="background:#2E5A44;padding:28px 32px;text-align:center"><h1 style="margin:0;color:#ffffff;font-size:22px;font-weight:700">Prakruthi Bags</h1><p style="margin:4px 0 0;color:#A3C9A8;font-size:13px">Eco-friendly &middot; Handcrafted &middot; Premium</p></td></tr><tr><td style="padding:32px 32px 24px"><h2 style="margin:0 0 6px;color:#1a1a1a;font-size:18px">Password Reset Request</h2><p style="margin:0 0 20px;color:#555;font-size:14px;line-height:1.6">We received a request to reset your password. Use the OTP below to proceed. This is valid for <strong>10 minutes</strong>.</p><div style="background:#f0f7f1;border-radius:8px;padding:20px;text-align:center;margin-bottom:20px"><p style="margin:0 0 8px;color:#2E5A44;font-size:13px;font-weight:600;text-transform:uppercase;letter-spacing:1px">Your OTP</p><div style="font-size:38px;font-weight:700;color:#1a3a2a;letter-spacing:10px;font-family:monospace">${otp}</div></div><p style="margin:0;color:#888;font-size:12px;line-height:1.5">If you did not request this password reset, please ignore this email or contact our support team.</p></td></tr><tr><td style="padding:16px 32px;background:#fafafa;border-top:1px solid #e8e8e8"><p style="margin:0;color:#999;font-size:11px;text-align:center">&copy; ${new Date().getFullYear()} Prakruthi Bags. All rights reserved.</p></td></tr></table></body></html>`,
+    });
 
-      if (!sent) {
-        // Roll back the OTP so a later retry can generate a fresh one.
-        user.otp = undefined;
-        user.otpExpires = undefined;
-        await user.save();
-        return res.status(503).json({
-          message: 'Failed to send OTP email. The email service is currently unavailable. Please try again later or contact support.',
-          code: 'EMAIL_FAILED',
-        });
-      }
-    } catch (emailError) {
+    if (!ok) {
+      // Roll back so a retry can generate a fresh OTP.
       user.otp = undefined;
       user.otpExpires = undefined;
+      user._plainOtp = undefined;
       await user.save();
-      console.error('[forgotPassword] Unexpected email error:', emailError?.message || emailError);
-      return res.status(503).json({
-        message: 'Failed to send OTP email. Please try again later.',
-        code: 'EMAIL_FAILED',
+
+      const messages = {
+        MISSING_ENV: 'Email service is not configured. Please contact support.',
+        AUTH_ERROR: 'SMTP authentication failed. Please contact support.',
+        NETWORK_ERROR: 'Unable to reach the email server. Please try again shortly.',
+        TIMEOUT: 'The email server timed out. Please try again shortly.',
+        SMTP_ERROR: 'The email service is temporarily unavailable. Please try again later.',
+        INVALID_RECIPIENT: 'Invalid recipient email.',
+      };
+      const httpStatus = reason === 'MISSING_ENV' || reason === 'AUTH_ERROR' ? 503 : 502;
+      return res.status(httpStatus).json({
+        success: false,
+        error: messages[reason] || 'Failed to send OTP email. Please try again later.',
+        code: reason,
       });
     }
 
-    res.status(200).json({ message: 'OTP sent to your email. It expires in 10 minutes.' });
+    return res.status(200).json({
+      success: true,
+      message: 'OTP sent successfully to your email. It expires in 10 minutes.',
+    });
   } catch (error) {
-    res.status(500).json({ message: error.message });
+    console.error('[sendOtp] Unexpected error:', error?.message || error);
+    return res.status(500).json({ success: false, error: 'Something went wrong. Please try again.' });
   }
 };
+
+// Legacy alias kept for backwards compatibility with the forgot-password page.
+const forgotPassword = sendOtp;
 
 const verifyOtp = async (req, res) => {
   try {
@@ -386,6 +409,7 @@ module.exports = {
   googleLogin,
   getGoogleConfig,
   forgotPassword,
+  sendOtp,
   verifyOtp,
   resetPassword,
   getProfile,

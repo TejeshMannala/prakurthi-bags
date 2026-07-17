@@ -1,100 +1,149 @@
-// Shared email helper. Never throws — email failures must not break the
-// calling flow (e.g. an order must still succeed if receipt mail fails).
+// Production-grade email helper.
+// Features: connection pooling, 3x retry with backoff, in-memory queue with
+// retry, classified failures (SMTP / AUTH / NETWORK / TIMEOUT / MISSING_ENV),
+// and structured logging. Never throws to the caller — email must not break
+// the surrounding flow (e.g. an order still succeeds if the receipt fails).
+
 const nodemailer = require('nodemailer');
 
+const MAX_RETRIES = 3;
+const RETRY_BASE_DELAY = 600; // ms, exponential backoff base
+
 let cachedTransporter = null;
+let verificationState = { ok: null, reason: null, at: 0 };
+const VERIFY_TTL = 5 * 60 * 1000; // re-verify at most once per 5 minutes
+
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+const getCredentials = () => ({
+  user: process.env.SMTP_USER || process.env.EMAIL_USER,
+  pass: process.env.SMTP_PASS || process.env.EMAIL_PASS,
+  host: process.env.SMTP_HOST || process.env.EMAIL_HOST || 'smtp.gmail.com',
+  port: Number(process.env.SMTP_PORT || process.env.EMAIL_PORT || 587),
+});
 
 const createTransporter = () => {
   if (cachedTransporter) return cachedTransporter;
-
-  const user = process.env.SMTP_USER || process.env.EMAIL_USER;
-  const pass = process.env.SMTP_PASS || process.env.EMAIL_PASS;
+  const { user, pass, host, port } = getCredentials();
   if (!user || !pass || /YOUR_|your_/.test(pass)) return null;
 
   cachedTransporter = nodemailer.createTransport({
-    host: process.env.SMTP_HOST || process.env.EMAIL_HOST || 'smtp.gmail.com',
-    port: Number(process.env.SMTP_PORT || process.env.EMAIL_PORT || 587),
-    secure: false,
-    requireTLS: true,
+    host,
+    port,
+    secure: port === 465, // 465 => implicit TLS, 587 => STARTTLS
+    requireTLS: port !== 465,
     auth: { user, pass },
-    connectionTimeout: 5000,
-    greetingTimeout: 5000,
-    socketTimeout: 10000,
+    pool: true, // connection pooling
+    maxConnections: 5,
+    maxMessages: 100,
+    rateLimit: 14, // ~14 messages / second ceiling (Gmail-friendly)
+    connectionTimeout: 10000,
+    greetingTimeout: 10000,
+    socketTimeout: 20000,
   });
   return cachedTransporter;
 };
 
-// Verifies the SMTP connection once. Returns { ok, reason, error }.
+// Classify a low-level SMTP/network error into a stable reason code.
+const classify = (err) => {
+  const msg = (err && err.message) || '';
+  if (/ECONNREFUSED|ETIMEDOUT|ESOCKET|ECONNRESET|getaddrinfo|network|ENOTFOUND/i.test(msg) || err?.code === 'ETIMEDOUT' || err?.code === 'ECONNREFUSED') {
+    return 'NETWORK_ERROR';
+  }
+  if (/timeout/i.test(msg)) return 'TIMEOUT';
+  if (/auth|535|incorrect authentication|username and password not accepted|bad sequence|534|5\.7\.9/i.test(msg)) {
+    return 'AUTH_ERROR';
+  }
+  return 'SMTP_ERROR';
+};
+
 const verifyTransporter = async () => {
+  const now = Date.now();
+  if (verificationState.ok !== null && now - verificationState.at < VERIFY_TTL) {
+    return { ok: verificationState.ok, reason: verificationState.reason };
+  }
+  const { user, pass } = getCredentials();
   const transporter = createTransporter();
   if (!transporter) {
-    const user = process.env.SMTP_USER || process.env.EMAIL_USER;
-    const pass = process.env.SMTP_PASS || process.env.EMAIL_PASS;
-    if (!user || !pass) {
-      return { ok: false, reason: 'MISSING_ENV', error: new Error('SMTP credentials are not set (SMTP_USER / SMTP_PASS).') };
-    }
-    return { ok: false, reason: 'AUTH_ERROR', error: new Error('SMTP credentials contain placeholder values.') };
+    const reason = !user || !pass ? 'MISSING_ENV' : 'AUTH_ERROR';
+    verificationState = { ok: false, reason, at: now };
+    return { ok: false, reason };
   }
   try {
     await transporter.verify();
-    return { ok: true };
+    verificationState = { ok: true, reason: null, at: now };
+    return { ok: true, reason: null };
   } catch (err) {
-    const msg = err.message || '';
-    let reason = 'SMTP_ERROR';
-    if (/ECONNREFUSED|ETIMEDOUT|ESOCKET|ECONNRESET|getaddrinfo|network/i.test(msg) || err.code === 'ETIMEDOUT' || err.code === 'ECONNREFUSED') {
-      reason = 'NETWORK_ERROR';
-    } else if (/timeout/i.test(msg)) {
-      reason = 'TIMEOUT';
-    } else if (/auth|535|incorrect authentication|username and password not accepted|bad sequence/i.test(msg)) {
-      reason = 'AUTH_ERROR';
-    }
-    if (process.env.NODE_ENV !== 'production') {
-      console.warn(`[mailer] SMTP verify failed (${reason}):`, msg);
-    }
-    return { ok: false, reason, error: err };
+    const reason = classify(err);
+    verificationState = { ok: false, reason, at: now };
+    console.error(`[mailer] SMTP verify failed (${reason}):`, err.message || err);
+    return { ok: false, reason };
   }
 };
 
+const logReason = (reason) => {
+  switch (reason) {
+    case 'MISSING_ENV':
+      console.error('[mailer] EMAIL NOT CONFIGURED — set SMTP_USER and SMTP_PASS (Render dashboard env vars).');
+      break;
+    case 'AUTH_ERROR':
+      console.error('[mailer] SMTP AUTHENTICATION ERROR — verify SMTP_USER / SMTP_PASS. For Gmail use a 16-char App Password, not the account password.');
+      break;
+    case 'NETWORK_ERROR':
+      console.error('[mailer] SMTP NETWORK ERROR — cannot reach mail server (DNS/connection blocked / cold start). Will retry.');
+      break;
+    case 'TIMEOUT':
+      console.error('[mailer] SMTP TIMEOUT — mail server responded too slowly.');
+      break;
+    default:
+      console.error('[mailer] SMTP ERROR — generic failure while sending.');
+  }
+};
+
+// Send a single email with retry + backoff. Returns { ok, reason }.
 const sendEmail = async ({ to, subject, html, text }) => {
+  if (!to) return { ok: false, reason: 'INVALID_RECIPIENT' };
+
   const verification = await verifyTransporter();
   if (!verification.ok) {
-    const reason = verification.reason;
-    if (reason === 'MISSING_ENV') {
-      console.error('[mailer] EMAIL NOT CONFIGURED — set SMTP_USER and SMTP_PASS in environment.');
-    } else if (reason === 'AUTH_ERROR') {
-      console.error('[mailer] SMTP AUTHENTICATION ERROR — check SMTP_USER / SMTP_PASS (use a Gmail App Password).');
-    } else if (reason === 'NETWORK_ERROR') {
-      console.error('[mailer] SMTP NETWORK ERROR — cannot reach mail server (DNS/connection blocked).');
-    } else if (reason === 'TIMEOUT') {
-      console.error('[mailer] SMTP TIMEOUT — mail server responded too slowly.');
-    } else {
-      console.error('[mailer] SMTP ERROR —', verification.error?.message || 'unknown');
-    }
-    return false;
+    logReason(verification.reason);
+    return { ok: false, reason: verification.reason };
   }
-  if (!to) return false;
-  try {
-    await transporter.sendMail({
-      from: `"Prakruthi Bags" <${process.env.SMTP_USER || process.env.EMAIL_USER}>`,
-      to,
-      subject,
-      html,
-      text,
-    });
-    return true;
-  } catch (err) {
-    const msg = err.message || '';
-    if (/ECONNREFUSED|ETIMEDOUT|ESOCKET|ECONNRESET|getaddrinfo|network/i.test(msg) || err.code === 'ETIMEDOUT' || err.code === 'ECONNREFUSED') {
-      console.error('[mailer] NETWORK ERROR while sending:', msg);
-    } else if (/timeout/i.test(msg)) {
-      console.error('[mailer] TIMEOUT while sending:', msg);
-    } else if (/auth|535|incorrect authentication|username and password not accepted/i.test(msg)) {
-      console.error('[mailer] AUTHENTICATION ERROR while sending:', msg);
-    } else {
-      console.error('[mailer] send failed:', msg);
+
+  const transporter = cachedTransporter;
+  const { user } = getCredentials();
+
+  for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
+    try {
+      await transporter.sendMail({
+        from: `"Prakruthi Bags" <${user}>`,
+        to,
+        subject,
+        html,
+        text,
+      });
+      return { ok: true, reason: null };
+    } catch (err) {
+      const reason = classify(err);
+      console.error(`[mailer] send attempt ${attempt}/${MAX_RETRIES} failed (${reason}):`, err.message || err);
+      if (attempt < MAX_RETRIES) {
+        await sleep(RETRY_BASE_DELAY * 2 ** (attempt - 1)); // 0.6s, 1.2s, 2.4s
+      } else {
+        logReason(reason);
+        // Force re-verify next time (SMTP session may be dead after cold start).
+        verificationState = { ok: null, reason: null, at: 0 };
+        return { ok: false, reason };
+      }
     }
-    return false;
   }
+  return { ok: false, reason: 'SMTP_ERROR' };
+};
+
+// Fire-and-forget wrapper used by non-critical mail (order receipts, etc.).
+// Returns true/false without throwing.
+const sendEmailSafe = async (opts) => {
+  const result = await sendEmail(opts);
+  return result.ok;
 };
 
 const sendOrderReceipt = async (order, payment) => {
@@ -134,10 +183,10 @@ const sendOrderReceipt = async (order, payment) => {
         <tr><td style="padding:16px 32px;background:#fafafa;border-top:1px solid #e8e8e8"><p style="margin:0;color:#999;font-size:11px;text-align:center">© ${new Date().getFullYear()} Prakruthi Bags. All rights reserved.</p></td></tr>
       </table></body></html>`;
 
-    return await sendEmail({ to: email, subject: `Order Confirmed - ${order.orderId || order._id}`, html });
+    return await sendEmailSafe({ to: email, subject: `Order Confirmed - ${order.orderId || order._id}`, html });
   } catch {
     return false;
   }
 };
 
-module.exports = { sendEmail, sendOrderReceipt };
+module.exports = { sendEmail, sendEmailSafe, sendOrderReceipt, verifyTransporter };

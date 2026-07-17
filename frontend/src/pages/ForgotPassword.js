@@ -45,11 +45,11 @@ const ForgotPassword = () => {
     setLoading(true);
     try {
       const { data } = await api.post('/api/auth/forgot-password', { email });
-      setMessage(data.message);
+      setMessage(data.message || 'OTP sent successfully to your email. It expires in 10 minutes.');
       setStep(2);
       startTimer();
     } catch (err) {
-      setError(err.response?.data?.message || 'Something went wrong.');
+      setError(err.response?.data?.error || err.response?.data?.message || 'Something went wrong.');
     } finally {
       setLoading(false);
     }
@@ -63,10 +63,10 @@ const ForgotPassword = () => {
     setOtp('');
     try {
       const { data } = await api.post('/api/auth/forgot-password', { email });
-      setMessage(data.message);
+      setMessage(data.message || 'OTP sent successfully to your email. It expires in 10 minutes.');
       startTimer();
     } catch (err) {
-      setError(err.response?.data?.message || 'Something went wrong.');
+      setError(err.response?.data?.error || err.response?.data?.message || 'Something went wrong.');
     }
   };
 
