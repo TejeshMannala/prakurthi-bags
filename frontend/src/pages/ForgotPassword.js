@@ -12,13 +12,13 @@ const ForgotPassword = () => {
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
 
-  // OTP timer — 10 minutes (600s)
-  const [timer, setTimer] = useState(600);
+  // OTP timer — 5 minutes (300s) to match the backend OTP_TTL_MS
+  const [timer, setTimer] = useState(300);
   const [canResend, setCanResend] = useState(false);
   const intervalRef = useRef(null);
 
   const startTimer = useCallback(() => {
-    setTimer(600);
+    setTimer(300);
     setCanResend(false);
     clearInterval(intervalRef.current);
     intervalRef.current = setInterval(() => {
@@ -45,11 +45,20 @@ const ForgotPassword = () => {
     setLoading(true);
     try {
       const { data } = await api.post('/api/auth/forgot-password', { email });
-      setMessage(data.message || 'OTP sent successfully to your email. It expires in 10 minutes.');
+      setMessage(data.message || 'If this email is registered, an OTP has been sent. It expires in 5 minutes.');
       setStep(2);
       startTimer();
     } catch (err) {
-      setError(err.response?.data?.error || err.response?.data?.message || 'Something went wrong.');
+      const msg = err.response?.data?.error || err.response?.data?.message;
+      if (msg) {
+        setError(msg);
+      } else if (err.code === 'ECONNABORTED' || err.message?.includes('timeout')) {
+        setError('Request timed out. Please check your connection and try again.');
+      } else if (!err.response) {
+        setError('Network error. Please check your internet connection and try again.');
+      } else {
+        setError('Something went wrong. Please try again.');
+      }
     } finally {
       setLoading(false);
     }
@@ -63,10 +72,17 @@ const ForgotPassword = () => {
     setOtp('');
     try {
       const { data } = await api.post('/api/auth/forgot-password', { email });
-      setMessage(data.message || 'OTP sent successfully to your email. It expires in 10 minutes.');
+      setMessage(data.message || 'If this email is registered, an OTP has been sent. It expires in 5 minutes.');
       startTimer();
     } catch (err) {
-      setError(err.response?.data?.error || err.response?.data?.message || 'Something went wrong.');
+      const msg = err.response?.data?.error || err.response?.data?.message;
+      if (msg) {
+        setError(msg);
+      } else if (!err.response) {
+        setError('Network error. Please check your connection and try again.');
+      } else {
+        setError('Something went wrong. Please try again.');
+      }
     }
   };
 

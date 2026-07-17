@@ -308,6 +308,7 @@ app.use(express.static(frontendPublic));
 
 // Catch-all SPA fallback: any non-API GET serves index.html so client-side
 // routes (/products, /cart, /profile, /admin...) survive a hard refresh.
+// This MUST be the LAST non-error route in the entire Express stack.
 app.get('*', (req, res) => {
   if (req.path.startsWith('/api')) {
     return res.status(404).json({ message: 'API route not found' });
@@ -321,11 +322,12 @@ app.get('*', (req, res) => {
   if (fs.existsSync(indexHtml)) {
     return res.sendFile(indexHtml);
   }
-  if (fs.existsSync(path.join(adminDist, 'index.html'))) {
-    return res.sendFile(path.join(adminDist, 'index.html'));
-  }
-  res.status(404).send(
-    'Build not found. Run `cd frontend && npm run build` (and `cd admin-dashboard && npm run build`).'
+  // Absolute worst case: never return a blank page. Return a minimal
+  // HTML page that redirects back to the root so the user always
+  // recovers instead of seeing a black/blank screen.
+  console.error('[SPA FATAL] index.html not found at:', indexHtml);
+  res.status(200).send(
+    '<!DOCTYPE html><html><head><meta charset="utf-8"><meta http-equiv="refresh" content="0;url=/"></head><body style="display:flex;justify-content:center;align-items:center;height:100vh;margin:0;font-family:system-ui"><p>Reloading... <a href="/">Click here</a></p></body></html>'
   );
 });
 
@@ -365,6 +367,23 @@ const startServer = (port) => {
 };
 
 startServer(desiredPort);
+
+// Post-startup SMTP health check — logs immediately so email failures
+// are visible in Render's logs without waiting for a user request.
+setTimeout(async () => {
+  try {
+    const { verifyTransporter } = require('./utils/mailer');
+    const result = await verifyTransporter();
+    if (result.ok) {
+      console.log('  ✓ SMTP Email: connected and verified');
+    } else {
+      console.error('  ✗ SMTP Email: NOT connected —', result.reason || 'unknown error');
+      console.error('    Forgot Password / OTP emails WILL FAIL. Fix your SMTP env vars on Render.');
+    }
+  } catch (e) {
+    console.error('  ✗ SMTP Email: startup check error —', e.message);
+  }
+}, 3000);
 
 connectDB().then(async () => {
   const Review = mongoose.model('Review');
