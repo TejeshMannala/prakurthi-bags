@@ -84,6 +84,16 @@ const userSchema = new mongoose.Schema(
     otpExpires: {
       type: Date,
     },
+    otpRequestedAt: {
+      type: Date,
+    },
+    otpResendCount: {
+      type: Number,
+      default: 0,
+    },
+    otpMaxReachedAt: {
+      type: Date,
+    },
   },
   { timestamps: true }
 );

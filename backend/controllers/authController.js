@@ -175,10 +175,36 @@ const googleLogin = async (req, res) => {
   }
 };
 
+// ---------------------------------------------------------------------------
+// Production-grade OTP configuration
+// ---------------------------------------------------------------------------
+const OTP_TTL_MS = 5 * 60 * 1000; // 5 minutes
+const OTP_RESEND_COOLDOWN_MS = 60 * 1000; // 60s between resends
+const OTP_MAX_RESENDS = 5; // hard cap per lock window
+const OTP_RESEND_WINDOW_MS = 60 * 60 * 1000; // 1h window for the cap
+const OTP_RATE_LIMIT = 5; // max requests per IP per window
+const OTP_RATE_WINDOW_MS = 10 * 60 * 1000; // 10 min
+
+// In-memory per-IP rate limiter (cheap, process-local; Render free tier is
+// single-instance so this is sufficient; pairs with Redis if scaled).
+const otpIpHits = new Map();
+const otpCleanup = () => {
+  const now = Date.now();
+  for (const [ip, rec] of otpIpHits) {
+    if (now - rec.windowStart > OTP_RATE_WINDOW_MS) otpIpHits.delete(ip);
+  }
+};
+setInterval(otpCleanup, OTP_RATE_WINDOW_MS).unref();
+
+const getClientIp = (req) =>
+  (req.headers['x-forwarded-for'] && req.headers['x-forwarded-for'].split(',')[0].trim()) ||
+  req.socket?.remoteAddress ||
+  'unknown';
+
 // Shared OTP dispatch used by both POST /api/auth/forgot-password and
-// POST /api/auth/send-otp. Generates a secure OTP, stores a bcrypt hash with
-// a 10-minute expiry (no duplicate OTP while one is still valid), and emails it
-// via the pooled/retry-enabled mailer. Returns a consistent JSON envelope.
+// POST /api/auth/send-otp. Implements cooldown, resend cap, rate limiting,
+// secure 5-min OTP (bcrypt-hashed), dedupe of in-flight OTP, and automatic
+// cleanup. Returns a consistent JSON envelope — never a raw 500.
 const sendOtp = async (req, res) => {
   try {
     const { email } = req.body;
@@ -187,34 +213,85 @@ const sendOtp = async (req, res) => {
       return res.status(400).json({ success: false, error: 'Invalid email address.' });
     }
 
+    // ---- Per-IP rate limiting (brute-force / abuse protection) ----
+    const ip = getClientIp(req);
+    const now = Date.now();
+    const rec = otpIpHits.get(ip) || { windowStart: now, count: 0 };
+    if (now - rec.windowStart > OTP_RATE_WINDOW_MS) {
+      rec.windowStart = now;
+      rec.count = 0;
+    }
+    rec.count += 1;
+    otpIpHits.set(ip, rec);
+    if (rec.count > OTP_RATE_LIMIT) {
+      console.warn(`[sendOtp] rate limit exceeded for IP ${ip}`);
+      return res.status(429).json({
+        success: false,
+        error: 'Too many requests. Please wait a few minutes before trying again.',
+        code: 'RATE_LIMITED',
+      });
+    }
+
     const user = await User.findOne({ email: email.toLowerCase().trim() });
     if (!user) {
       // Do not reveal whether an email exists (avoid account enumeration).
       return res.status(200).json({
         success: true,
-        message: 'If this email is registered, an OTP has been sent. It expires in 10 minutes.',
+        message: 'If this email is registered, an OTP has been sent. It expires in 5 minutes.',
       });
     }
 
-    // Reuse an unexpired OTP instead of generating duplicates.
-    let otp = user.otp && user.otpExpires && Date.now() < new Date(user.otpExpires).getTime()
-      ? user._plainOtp
-      : null;
+    // ---- Resend cooldown + max resend cap (per 1h window) ----
+    if (user.otpRequestedAt && now - new Date(user.otpRequestedAt).getTime() < OTP_RESEND_COOLDOWN_MS) {
+      const waitSec = Math.ceil(
+        (OTP_RESEND_COOLDOWN_MS - (now - new Date(user.otpRequestedAt).getTime())) / 1000
+      );
+      return res.status(429).json({
+        success: false,
+        error: `Please wait ${waitSec}s before requesting another OTP.`,
+        code: 'RESEND_COOLDOWN',
+        retryAfter: waitSec,
+      });
+    }
+    if (
+      user.otpMaxReachedAt &&
+      now - new Date(user.otpMaxReachedAt).getTime() < OTP_RESEND_WINDOW_MS
+    ) {
+      return res.status(429).json({
+        success: false,
+        error: 'Maximum OTP requests reached. Please try again after an hour.',
+        code: 'MAX_RESENDS',
+      });
+    }
+
+    // ---- Reuse an unexpired OTP instead of generating duplicates ----
+    let otp = null;
+    const hasValidOtp =
+      user.otp && user.otpExpires && now < new Date(user.otpExpires).getTime();
+    if (hasValidOtp && user._plainOtp) {
+      otp = user._plainOtp;
+    }
 
     if (!otp) {
       otp = Math.floor(100000 + Math.random() * 900000).toString();
       const salt = await bcrypt.genSalt(10);
       const hashedOtp = await bcrypt.hash(otp, salt);
       user.otp = hashedOtp;
-      user.otpExpires = new Date(Date.now() + 10 * 60 * 1000);
-      user._plainOtp = otp; // temporary in-memory only, never persisted
-      await user.save();
+      user.otpExpires = new Date(now + OTP_TTL_MS);
+      user._plainOtp = otp; // in-memory only, never persisted
     }
+
+    user.otpRequestedAt = new Date(now);
+    user.otpResendCount = (user.otpResendCount || 0) + 1;
+    if (user.otpResendCount >= OTP_MAX_RESENDS) {
+      user.otpMaxReachedAt = new Date(now);
+    }
+    await user.save();
 
     const { ok, reason } = await sendEmail({
       to: user.email,
       subject: 'Password Reset OTP - Prakruthi Bags',
-      html: `<!DOCTYPE html><html><head><meta charset="utf-8"></head><body style="margin:0;padding:0;background-color:#f4f4f4;font-family:Arial,Helvetica,sans-serif"><table role="presentation" style="width:100%;max-width:520px;margin:40px auto;background:#ffffff;border-radius:12px;overflow:hidden;box-shadow:0 2px 12px rgba(0,0,0,0.08)"><tr><td style="background:#2E5A44;padding:28px 32px;text-align:center"><h1 style="margin:0;color:#ffffff;font-size:22px;font-weight:700">Prakruthi Bags</h1><p style="margin:4px 0 0;color:#A3C9A8;font-size:13px">Eco-friendly &middot; Handcrafted &middot; Premium</p></td></tr><tr><td style="padding:32px 32px 24px"><h2 style="margin:0 0 6px;color:#1a1a1a;font-size:18px">Password Reset Request</h2><p style="margin:0 0 20px;color:#555;font-size:14px;line-height:1.6">We received a request to reset your password. Use the OTP below to proceed. This is valid for <strong>10 minutes</strong>.</p><div style="background:#f0f7f1;border-radius:8px;padding:20px;text-align:center;margin-bottom:20px"><p style="margin:0 0 8px;color:#2E5A44;font-size:13px;font-weight:600;text-transform:uppercase;letter-spacing:1px">Your OTP</p><div style="font-size:38px;font-weight:700;color:#1a3a2a;letter-spacing:10px;font-family:monospace">${otp}</div></div><p style="margin:0;color:#888;font-size:12px;line-height:1.5">If you did not request this password reset, please ignore this email or contact our support team.</p></td></tr><tr><td style="padding:16px 32px;background:#fafafa;border-top:1px solid #e8e8e8"><p style="margin:0;color:#999;font-size:11px;text-align:center">&copy; ${new Date().getFullYear()} Prakruthi Bags. All rights reserved.</p></td></tr></table></body></html>`,
+      html: `<!DOCTYPE html><html><head><meta charset="utf-8"></head><body style="margin:0;padding:0;background-color:#f4f4f4;font-family:Arial,Helvetica,sans-serif"><table role="presentation" style="width:100%;max-width:520px;margin:40px auto;background:#ffffff;border-radius:12px;overflow:hidden;box-shadow:0 2px 12px rgba(0,0,0,0.08)"><tr><td style="background:#2E5A44;padding:28px 32px;text-align:center"><h1 style="margin:0;color:#ffffff;font-size:22px;font-weight:700">Prakruthi Bags</h1><p style="margin:4px 0 0;color:#A3C9A8;font-size:13px">Eco-friendly &middot; Handcrafted &middot; Premium</p></td></tr><tr><td style="padding:32px 32px 24px"><h2 style="margin:0 0 6px;color:#1a1a1a;font-size:18px">Password Reset Request</h2><p style="margin:0 0 20px;color:#555;font-size:14px;line-height:1.6">We received a request to reset your password. Use the OTP below to proceed. This is valid for <strong>5 minutes</strong>.</p><div style="background:#f0f7f1;border-radius:8px;padding:20px;text-align:center;margin-bottom:20px"><p style="margin:0 0 8px;color:#2E5A44;font-size:13px;font-weight:600;text-transform:uppercase;letter-spacing:1px">Your OTP</p><div style="font-size:38px;font-weight:700;color:#1a3a2a;letter-spacing:10px;font-family:monospace">${otp}</div></div><p style="margin:0;color:#888;font-size:12px;line-height:1.5">If you did not request this password reset, please ignore this email or contact our support team.</p></td></tr><tr><td style="padding:16px 32px;background:#fafafa;border-top:1px solid #e8e8e8"><p style="margin:0;color:#999;font-size:11px;text-align:center">&copy; ${new Date().getFullYear()} Prakruthi Bags. All rights reserved.</p></td></tr></table></body></html>`,
     });
 
     if (!ok) {
@@ -222,6 +299,8 @@ const sendOtp = async (req, res) => {
       user.otp = undefined;
       user.otpExpires = undefined;
       user._plainOtp = undefined;
+      user.otpRequestedAt = undefined;
+      user.otpResendCount = Math.max(0, (user.otpResendCount || 1) - 1);
       await user.save();
 
       const messages = {
@@ -242,7 +321,7 @@ const sendOtp = async (req, res) => {
 
     return res.status(200).json({
       success: true,
-      message: 'OTP sent successfully to your email. It expires in 10 minutes.',
+      message: 'OTP sent successfully to your email. It expires in 5 minutes.',
     });
   } catch (error) {
     console.error('[sendOtp] Unexpected error:', error?.message || error);
@@ -276,17 +355,30 @@ const verifyOtp = async (req, res) => {
     if (Date.now() > new Date(user.otpExpires).getTime()) {
       user.otp = undefined;
       user.otpExpires = undefined;
+      user.otpRequestedAt = undefined;
+      user._plainOtp = undefined;
       await user.save();
       return res.status(400).json({ message: 'OTP has expired. Please request a new one.' });
     }
 
     const isValid = await bcrypt.compare(otp, user.otp);
     if (!isValid) {
+      console.warn(`[verifyOtp] failed attempt for ${email}`);
       return res.status(400).json({ message: 'Invalid OTP. Please try again.' });
     }
 
-    res.status(200).json({ message: 'OTP verified successfully.' });
+    // OTP verified — clear it so it can't be reused (no replay / brute force).
+    user.otp = undefined;
+    user.otpExpires = undefined;
+    user.otpRequestedAt = undefined;
+    user.otpResendCount = 0;
+    user.otpMaxReachedAt = undefined;
+    user._plainOtp = undefined;
+    await user.save();
+
+    res.status(200).json({ success: true, message: 'OTP verified successfully.' });
   } catch (error) {
+    console.error('[verifyOtp] error:', error?.message || error);
     res.status(500).json({ message: 'OTP verification failed. Please try again.' });
   }
 };
@@ -317,22 +409,30 @@ const resetPassword = async (req, res) => {
     if (Date.now() > new Date(user.otpExpires).getTime()) {
       user.otp = undefined;
       user.otpExpires = undefined;
+      user.otpRequestedAt = undefined;
+      user._plainOtp = undefined;
       await user.save();
       return res.status(400).json({ message: 'OTP has expired. Please request a new one.' });
     }
 
     const isValid = await bcrypt.compare(otp, user.otp);
     if (!isValid) {
+      console.warn(`[resetPassword] failed attempt for ${email}`);
       return res.status(400).json({ message: 'Invalid OTP.' });
     }
 
     user.password = newPassword;
     user.otp = undefined;
     user.otpExpires = undefined;
+    user.otpRequestedAt = undefined;
+    user.otpResendCount = 0;
+    user.otpMaxReachedAt = undefined;
+    user._plainOtp = undefined;
     await user.save();
 
-    res.json({ message: 'Password reset successful.' });
+    res.json({ success: true, message: 'Password reset successful.' });
   } catch (error) {
+    console.error('[resetPassword] error:', error?.message || error);
     res.status(500).json({ message: 'Password reset failed. Please try again.' });
   }
 };

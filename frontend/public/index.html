@@ -4,6 +4,19 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <meta name="theme-color" content="#1B5E20" />
+    <!-- Apply persisted theme BEFORE React paints to prevent any flash /
+         flicker on refresh. Defaults to light; a future toggle can write
+         `localStorage.theme` and this just re-applies it. -->
+    <script>
+      (function () {
+        try {
+          var t = localStorage.getItem('theme');
+          if (t === 'dark' || t === 'light') {
+            document.documentElement.setAttribute('data-theme', t);
+          }
+        } catch (e) {}
+      })();
+    </script>
     <link rel="icon" href="%PUBLIC_URL%/favicon.ico" />
     <link rel="icon" type="image/svg+xml" href="%PUBLIC_URL%/favicon.svg" />
     <link rel="apple-touch-icon" href="%PUBLIC_URL%/icon-192.png" />

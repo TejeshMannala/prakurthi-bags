@@ -182,6 +182,30 @@ app.get('/api/health', (req, res) => {
   });
 });
 
+// Email service health probe (does not require DB). Verifies SMTP
+// connectivity without sending a message.
+app.get('/api/email-health', async (req, res) => {
+  try {
+    const { verifyTransporter } = require('./utils/mailer');
+    const result = await verifyTransporter();
+    if (result.ok) {
+      return res.json({ status: 'OK', email: 'connected', timestamp: new Date().toISOString() });
+    }
+    return res.status(503).json({
+      status: 'ERROR',
+      email: result.reason || 'SMTP_ERROR',
+      timestamp: new Date().toISOString(),
+    });
+  } catch (err) {
+    return res.status(503).json({
+      status: 'ERROR',
+      email: 'UNKNOWN',
+      message: err?.message || 'Email health check failed',
+      timestamp: new Date().toISOString(),
+    });
+  }
+});
+
 app.use('/api/', dbCheck);
 
 
