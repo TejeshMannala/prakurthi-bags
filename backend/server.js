@@ -243,7 +243,7 @@ app.use((err, req, res, next) => {
   // Centralized error handler: logs with context and returns a meaningful,
   // JSON error (never an HTML stack trace) so the frontend can show a clear
   // message instead of a generic 500.
-  const statusCode = err.statusCode || 500;
+  let statusCode = err.statusCode || 500;
   let message = err.message || 'Internal server error.';
   let code = err.code || null;
 
@@ -391,7 +391,7 @@ connectDB().then(async () => {
   const Product = mongoose.model('Product');
 
   // Clean up any seed/fake data from previous seed.js runs
-  const seedUserPattern = /seed\.customer\.\d+@parkuthi\.local/;
+  const seedUserPattern = /seed\.customer\.\d+@prakruthi\.local/;
   const seedUsers = await User.find({ email: { $regex: seedUserPattern } }).lean();
   const seedUserIds = seedUsers.map(u => u._id);
 
