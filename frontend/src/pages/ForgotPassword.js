@@ -459,6 +459,10 @@ const ForgotPassword = () => {
         @media (max-width: 480px) {
           .otp-box { width: 42px; height: 50px; font-size: 20px; }
         }
+        @media (max-width: 360px) {
+          .otp-boxes { gap: 5px; }
+          .otp-box { width: 38px; height: 46px; font-size: 18px; border-radius: 10px; }
+        }
       `}</style>
     </div>
   );

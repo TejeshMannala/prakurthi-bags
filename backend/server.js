@@ -102,6 +102,54 @@ app.use(
     crossOriginResourcePolicy: false,
     crossOriginEmbedderPolicy: false,
     crossOriginOpenerPolicy: false,
+    contentSecurityPolicy: {
+      directives: {
+        defaultSrc: ["'self'"],
+        scriptSrc: [
+          "'self'",
+          "'unsafe-inline'",
+          "'unsafe-eval'",
+          'https://accounts.google.com',
+          'https://apis.google.com',
+          'https://ssl.gstatic.com',
+        ],
+        styleSrc: [
+          "'self'",
+          "'unsafe-inline'",
+          'https://fonts.googleapis.com',
+          'https://accounts.google.com',
+        ],
+        fontSrc: [
+          "'self'",
+          'https://fonts.gstatic.com',
+          'https://fonts.googleapis.com',
+          'data:',
+        ],
+        imgSrc: [
+          "'self'",
+          'data:',
+          'blob:',
+          'https:',
+          'http:',
+        ],
+        connectSrc: [
+          "'self'",
+          'https://accounts.google.com',
+          'https://oauth2.googleapis.com',
+          'https://www.googleapis.com',
+          'https://prakurthi-bags.onrender.com',
+        ],
+        frameSrc: [
+          "'self'",
+          'https://accounts.google.com',
+          'https://apis.google.com',
+        ],
+        objectSrc: ["'none'"],
+        baseUri: ["'self'"],
+        formAction: ["'self'"],
+        upgradeInsecureRequests: [],
+      },
+    },
   })
 );
 app.use(mongoSanitize());
@@ -305,7 +353,19 @@ app.get('/admin/*', (req, res) => {
 
 // Serve frontend build assets (JS/CSS/images) and public static files
 // (favicon, manifest, robots.txt, etc.) from the SAME origin.
-app.use(express.static(frontendBuild));
+app.use(express.static(frontendBuild, {
+  // index.html must never be cached — stale index.html is the #1 cause
+  // of white/black screen on hard refresh.  All other build assets are
+  // fingerprinted by CRA and can be cached aggressively.
+  index: false,
+  setHeaders: (res, filePath) => {
+    if (filePath.endsWith('index.html')) {
+      res.set('Cache-Control', 'no-cache, no-store, must-revalidate');
+      res.set('Pragma', 'no-cache');
+      res.set('Expires', '0');
+    }
+  },
+}));
 app.use(express.static(frontendPublic));
 
 // Catch-all SPA fallback: any non-API GET serves index.html so client-side
@@ -322,6 +382,9 @@ app.get('*', (req, res) => {
   }
   const indexHtml = path.join(frontendBuild, 'index.html');
   if (fs.existsSync(indexHtml)) {
+    res.set('Cache-Control', 'no-cache, no-store, must-revalidate');
+    res.set('Pragma', 'no-cache');
+    res.set('Expires', '0');
     return res.sendFile(indexHtml);
   }
   // Absolute worst case: never return a blank page. Return a minimal

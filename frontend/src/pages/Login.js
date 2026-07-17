@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { Link, useNavigate, useLocation } from 'react-router-dom';
-import { initGoogleIdentity, promptGoogleCredential, getGoogleClientId } from '../utils/googleAuth';
+import { initGoogleIdentity, promptGoogleCredential, getGoogleClientId, preloadGoogleScript } from '../utils/googleAuth';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useDispatch } from 'react-redux';
 import { FaLeaf } from 'react-icons/fa';
@@ -60,6 +60,9 @@ const Login = () => {
     const clientId = getGoogleClientId();
     if (!clientId) return;
     let active = true;
+    // Preload the Google SDK script immediately so it's cached by the
+    // time the user clicks the Google button.
+    preloadGoogleScript();
     initGoogleIdentity({
       clientId,
       onCredential: (credential) => {
@@ -352,7 +355,7 @@ const Login = () => {
                   </span>
                   <span style={{ flex: 1, height: 1, background: '#e5e7eb' }} />
                 </div>
-                <div style={{ position: 'relative', display: 'inline-flex' }}>
+                <div style={{ position: 'relative', display: 'flex', width: '100%' }}>
                   <button
                     type="button"
                     onClick={() => {
@@ -553,8 +556,7 @@ const Login = () => {
           align-items: center;
           justify-content: center;
           gap: 10px;
-          width: 310px;
-          max-width: 100%;
+          width: 100%;
           padding: 12px 16px;
           background: #fff;
           color: #3c4043;
@@ -583,6 +585,12 @@ const Login = () => {
           .auth-card { padding: 28px 18px; border-radius: 20px; }
           .auth-input-wrapper input { font-size: 16px; }
           .auth-submit-btn { min-height: 48px; font-size: 15px; }
+          .auth-google-btn { font-size: 14px; padding: 11px 14px; }
+        }
+
+        @media (max-width: 360px) {
+          .auth-card { padding: 24px 14px; border-radius: 18px; }
+          .auth-google-btn { font-size: 13px; gap: 8px; }
         }
       `}</style>
     </div>

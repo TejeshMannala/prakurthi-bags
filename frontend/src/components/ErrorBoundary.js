@@ -22,6 +22,12 @@ class ErrorBoundary extends React.Component {
       const retries = this.state.retryCount;
       if (retries < 2) {
         setTimeout(() => {
+          // Clear any stale service worker caches that might serve old chunks
+          if ('caches' in window) {
+            caches.keys().then((names) => {
+              names.forEach((name) => caches.delete(name));
+            }).catch(() => {});
+          }
           this.setState({ retryCount: retries + 1, hasError: false, error: null });
           window.location.reload();
         }, 2000);
