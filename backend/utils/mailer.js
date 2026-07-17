@@ -84,7 +84,9 @@ const verifyTransporter = async () => {
 const logReason = (reason) => {
   switch (reason) {
     case 'MISSING_ENV':
-      console.error('[mailer] EMAIL NOT CONFIGURED — set SMTP_USER and SMTP_PASS (Render dashboard env vars).');
+      console.error('[mailer] EMAIL NOT CONFIGURED — set SMTP_USER and SMTP_PASS (or EMAIL_USER and EMAIL_PASS) in Render dashboard env vars.');
+      console.error('[mailer] For Gmail: use a 16-char App Password from https://myaccount.google.com/apppasswords');
+      console.error('[mailer] Required env vars: SMTP_HOST (default: smtp.gmail.com), SMTP_PORT (default: 465), SMTP_USER (your email), SMTP_PASS (app password)');
       break;
     case 'AUTH_ERROR':
       console.error('[mailer] SMTP AUTHENTICATION ERROR — verify SMTP_USER / SMTP_PASS. For Gmail use a 16-char App Password, not the account password.');

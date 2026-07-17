@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { Link, useNavigate, useLocation } from 'react-router-dom';
-import { initGoogleIdentity, promptGoogleCredential, getGoogleClientId, preloadGoogleScript } from '../utils/googleAuth';
+import { initGoogleIdentity, promptGoogleCredential, getGoogleClientId, preloadGoogleScript, fetchGoogleClientId } from '../utils/googleAuth';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useDispatch } from 'react-redux';
 import { FaLeaf } from 'react-icons/fa';
@@ -57,32 +57,41 @@ const Login = () => {
   // googleAuth.js). This prevents "google.accounts.id.initialize() called
   // multiple times" and avoids duplicate backend login requests.
   useEffect(() => {
-    const clientId = getGoogleClientId();
-    if (!clientId) return;
     let active = true;
-    // Preload the Google SDK script immediately so it's cached by the
-    // time the user clicks the Google button.
-    preloadGoogleScript();
-    initGoogleIdentity({
-      clientId,
-      onCredential: (credential) => {
-        if (!active) return;
-        handleGoogleSuccess({ credential });
-      },
-      onError: (err) => {
-        if (!active) return;
-        handleGoogleError(err);
-      },
-    }).catch(() => {
-      if (active && !isOriginLocal) {
-        setGoogleError(
-          'Google sign-in is blocked for this origin (Error 400: origin_mismatch).\n\n' +
-          'Fix: in Google Cloud Console -> APIs & Services -> Credentials -> your Web application OAuth Client ID, add this EXACT origin under "Authorized JavaScript origins":\n\n' +
-          `${window.location.origin}\n\n` +
-          'Then hard-refresh this page.'
-        );
+    const initGoogle = async () => {
+      // Try build-time env var first, then fall back to backend endpoint
+      let clientId = getGoogleClientId();
+      if (!clientId) {
+        clientId = await fetchGoogleClientId();
       }
-    });
+      if (!clientId || !active) return;
+      // Preload the Google SDK script immediately so it's cached by the
+      // time the user clicks the Google button.
+      preloadGoogleScript();
+      try {
+        await initGoogleIdentity({
+          clientId,
+          onCredential: (credential) => {
+            if (!active) return;
+            handleGoogleSuccess({ credential });
+          },
+          onError: (err) => {
+            if (!active) return;
+            handleGoogleError(err);
+          },
+        });
+      } catch {
+        if (active && !isOriginLocal) {
+          setGoogleError(
+            'Google sign-in is blocked for this origin (Error 400: origin_mismatch).\n\n' +
+            'Fix: in Google Cloud Console -> APIs & Services -> Credentials -> your Web application OAuth Client ID, add this EXACT origin under "Authorized JavaScript origins":\n\n' +
+            `${window.location.origin}\n\n` +
+            'Then hard-refresh this page.'
+          );
+        }
+      }
+    };
+    initGoogle();
     return () => { active = false; };
   }, []);
 
@@ -360,6 +369,10 @@ const Login = () => {
                     type="button"
                     onClick={() => {
                       if (googleSubmitting.current) return;
+                      if (!window.google || !window.google.accounts) {
+                        setGoogleError('Google Sign-In is still loading. Please wait a moment and try again.');
+                        return;
+                      }
                       googleSubmitting.current = true;
                       setGoogleLoading(true);
                       setGoogleError('');
@@ -373,6 +386,7 @@ const Login = () => {
                       } catch {
                         googleSubmitting.current = false;
                         setGoogleLoading(false);
+                        setGoogleError('Google Sign-In failed to start. Please try again or use Email / Password.');
                       }
                     }}
                     className="auth-google-btn"

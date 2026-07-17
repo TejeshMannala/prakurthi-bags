@@ -325,12 +325,18 @@ const sendOtp = async (req, res) => {
 
     if (!ok) {
       console.error(`[sendOtp] Email delivery FAILED for ${user.email}: ${reason}`);
-    } else {
-      console.log(`[sendOtp] Email sent successfully to ${user.email}`);
+      // Tell the user explicitly that the email failed so they can report it.
+      // The OTP IS stored and valid for 10 minutes — they can also use the
+      // resend flow once SMTP is fixed.
+      return res.status(503).json({
+        success: false,
+        message: 'Unable to send OTP email. Please try again shortly or contact support.',
+        errorCode: 'EMAIL_FAILED',
+        detail: process.env.NODE_ENV === 'development' ? reason : undefined,
+      });
     }
 
-    // Always return 200 with a user-friendly message. The OTP is stored
-    // and valid regardless of email delivery status.
+    console.log(`[sendOtp] Email sent successfully to ${user.email}`);
     return res.status(200).json({
       success: true,
       message: 'OTP has been sent to your email. It expires in 10 minutes.',

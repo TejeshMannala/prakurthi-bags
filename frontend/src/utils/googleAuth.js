@@ -89,5 +89,25 @@ export const promptGoogleCredential = () => {
   }
 };
 
+// Get Google Client ID. First tries the build-time env var, then falls back
+// to fetching from the backend /api/auth/google-config endpoint.
 export const getGoogleClientId = () =>
   process.env.REACT_APP_GOOGLE_CLIENT_ID || null;
+
+// Fetch the Google Client ID from the backend (preferred for production
+// where REACT_APP_GOOGLE_CLIENT_ID is not set at build time).
+let cachedClientId = null;
+export const fetchGoogleClientId = async () => {
+  if (cachedClientId) return cachedClientId;
+  try {
+    const { default: api } = await import('./axios');
+    const { data } = await api.get('/api/auth/google-config');
+    if (data.enabled && data.clientId) {
+      cachedClientId = data.clientId;
+      return data.clientId;
+    }
+  } catch {
+    // fallback to env var
+  }
+  return getGoogleClientId();
+};

@@ -73,7 +73,7 @@ const checkPlaceholder = (val, label) => {
 
 const OPTIONAL_SERVICES = [
   { key: 'GOOGLE_CLIENT_ID', label: 'Google OAuth', check: (e) => checkPlaceholder(e.GOOGLE_CLIENT_ID, 'Google OAuth') },
-  { key: 'SMTP_PASS', label: 'SMTP Email', check: (e) => e.SMTP_PASS && !hasPlaceholder(e.SMTP_PASS) },
+  { key: 'SMTP_PASS', label: 'SMTP Email', check: (e) => (e.SMTP_PASS || e.EMAIL_PASS) && !hasPlaceholder(e.SMTP_PASS || e.EMAIL_PASS) },
   { key: 'CLOUDINARY_CLOUD_NAME', label: 'Cloudinary', check: (e) => e.CLOUDINARY_CLOUD_NAME && e.CLOUDINARY_API_KEY && !hasPlaceholder(e.CLOUDINARY_CLOUD_NAME) },
   { key: 'REDIS_URL', label: 'Redis Cache', check: (e) => e.REDIS_URL && !hasPlaceholder(e.REDIS_URL) },
   { key: 'ADMIN_EMAIL', label: 'Admin Auth', check: (e) => e.ADMIN_EMAIL && !hasPlaceholder(e.ADMIN_EMAIL) },
@@ -86,6 +86,27 @@ for (const svc of OPTIONAL_SERVICES) {
     console.log('  ⚠', svc.label, 'not configured — feature disabled');
   }
 }
+
+// Full env audit for debugging production issues
+console.log('');
+console.log('[ENV AUDIT]');
+const envVars = ['NODE_ENV', 'PORT', 'MONGO_URI', 'JWT_SECRET', 'JWT_EXPIRE',
+  'GOOGLE_CLIENT_ID', 'GOOGLE_CLIENT_SECRET', 'SMTP_USER', 'SMTP_PASS',
+  'EMAIL_USER', 'EMAIL_PASS', 'SMTP_HOST', 'SMTP_PORT',
+  'FRONTEND_URL', 'ADMIN_URL', 'REACT_APP_API_URL'];
+for (const v of envVars) {
+  const val = process.env[v];
+  if (val) {
+    // Mask sensitive values but show first 4 chars
+    const masked = (v.includes('SECRET') || v.includes('PASS') || v.includes('URI'))
+      ? val.substring(0, 4) + '***'
+      : val;
+    console.log(`  ✓ ${v} = ${masked}`);
+  } else {
+    console.log(`  ✗ ${v} = NOT SET`);
+  }
+}
+console.log('');
 
 const app = express();
 app.set('trust proxy', 1);
@@ -436,6 +457,24 @@ startServer(desiredPort);
 // Post-startup SMTP health check — logs immediately so email failures
 // are visible in Render's logs without waiting for a user request.
 setTimeout(async () => {
+  const smtpUser = process.env.SMTP_USER || process.env.EMAIL_USER;
+  const smtpPass = process.env.SMTP_PASS || process.env.EMAIL_PASS;
+  if (!smtpUser || !smtpPass) {
+    // console.error('');
+    // console.error('╔══════════════════════════════════════════════════════════╗');
+    // console.error('║  ⚠  SMTP NOT CONFIGURED — Forgot Password emails      ║');
+    // console.error('║  will NOT be delivered. Set these env vars:            ║');
+    // console.error('║                                                        ║');
+    // console.error('║  SMTP_USER (or EMAIL_USER) — your email address        ║');
+    // console.error('║  SMTP_PASS (or EMAIL_PASS) — 16-char App Password      ║');
+    // console.error('║                                                        ║');
+    // console.error('║  For Gmail: https://myaccount.google.com/apppasswords  ║');
+    // console.error('║  Required env vars: SMTP_HOST=smtp.gmail.com           ║');
+    // console.error('║                   SMTP_PORT=465                         ║');
+    // console.error('╚══════════════════════════════════════════════════════════╝');
+    // console.error('');
+    return;
+  }
   try {
     const { verifyTransporter } = require('./utils/mailer');
     const result = await verifyTransporter();

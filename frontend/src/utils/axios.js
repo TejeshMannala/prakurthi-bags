@@ -51,9 +51,14 @@ api.interceptors.response.use(
         url.includes('/api/auth/google') ||
         url.includes('/api/auth/forgot-password') ||
         url.includes('/api/auth/verify-otp') ||
-        url.includes('/api/auth/reset-password');
+        url.includes('/api/auth/reset-password') ||
+        url.includes('/api/auth/google-config');
       if (!isAuthRoute) {
         localStorage.removeItem('token');
+        // Only redirect if not already on login page
+        if (!window.location.pathname.startsWith('/login')) {
+          window.location.href = '/login';
+        }
       }
     }
     return Promise.reject(error);

@@ -52,6 +52,9 @@ services:
       # IMPORTANT: keep REACT_APP_API_URL and VITE_API_URL UNSET so the
       # builds fall back to window.location.origin (same origin, no /api dup).
       # SMTP Email (forgot-password / OTP). Set via Render dashboard.
+      # These MUST be set for OTP emails to work. For Gmail, use an App Password
+      # (16-char) from https://myaccount.google.com/apppasswords — NOT your
+      # regular password.  See README for setup instructions.
       # - key: SMTP_HOST
       #   value: smtp.gmail.com
       # - key: SMTP_PORT
@@ -60,3 +63,5 @@ services:
       #   sync: false
       # - key: SMTP_PASS
       #   sync: false
+      - key: GOOGLE_LOGIN_ENABLED
+        value: 'true'
