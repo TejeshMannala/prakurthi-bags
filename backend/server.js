@@ -242,10 +242,11 @@ app.use('/api', (req, res) => {
 app.use((err, req, res, next) => {
   // Centralized error handler: logs with context and returns a meaningful,
   // JSON error (never an HTML stack trace) so the frontend can show a clear
-  // message instead of a generic 500.
+  // message instead of a generic 500. Uses consistent { success, message,
+  // errorCode } envelope matching all other auth endpoints.
   let statusCode = err.statusCode || 500;
   let message = err.message || 'Internal server error.';
-  let code = err.code || null;
+  let code = err.code || 'SERVER_ERROR';
 
   const errMsg = err.message || '';
   if (statusCode === 500) {
@@ -264,14 +265,15 @@ app.use((err, req, res, next) => {
 
   const logLevel = statusCode >= 500 ? 'error' : 'warn';
   console[logLevel](
-    `[${req.method} ${req.originalUrl}] -> ${statusCode} ${code || ''}`.trim(),
+    `[${req.method} ${req.originalUrl}] -> ${statusCode} ${code}`.trim(),
     statusCode >= 500 ? (err.stack || err.message) : ''
   );
 
   res.status(statusCode).json({
+    success: false,
     message,
-    ...(code && { code }),
-    ...(process.env.NODE_ENV === 'development' && { stack: err.stack }),
+    errorCode: code,
+    timestamp: new Date().toISOString(),
   });
 });
 

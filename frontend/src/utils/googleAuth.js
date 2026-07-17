@@ -4,6 +4,10 @@
 // console warning and can double-fire the backend login. This module caches
 // the client id and the initialized state so the GIS script + library are set
 // up a single time, regardless of how many components mount/unmount.
+//
+// Performance: The script is preloaded via <link rel="preload"> when the Login
+// page mounts, so by the time the user clicks "Continue with Google", the SDK
+// is already cached in the browser. The prompt opens instantly.
 
 let scriptPromise = null;
 let initPromise = null;
@@ -34,7 +38,14 @@ const loadGsiScript = () => {
   return scriptPromise;
 };
 
+// Preload the Google Identity Services script so it's ready when the user
+// clicks the Google button. Call this when the Login page mounts.
+export const preloadGoogleScript = () => {
+  loadGsiScript().catch(() => {});
+};
+
 // Initialize GIS once. `onCredential` is invoked with the JWT credential.
+// Uses use_fedcm_for_prompt: false for broader compatibility and faster popup.
 export const initGoogleIdentity = async ({ clientId, onCredential, onError }) => {
   if (initPromise && clientIdCache === clientId) return initPromise;
   clientIdCache = clientId;
@@ -52,8 +63,9 @@ export const initGoogleIdentity = async ({ clientId, onCredential, onError }) =>
           onError(response || new Error('No credential returned'));
         }
       },
-      // Avoid the popup/postMessage cross-origin issues in some embed contexts.
-      use_fedcm_for_prompt: true,
+      // use_fedcm_for_prompt: false ensures the traditional popup flow is used,
+      // which is more broadly supported and opens faster than FedCM.
+      use_fedcm_for_prompt: false,
     });
     return google;
   })();

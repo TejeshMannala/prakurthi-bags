@@ -11,14 +11,21 @@ const ForgotPassword = () => {
   const [message, setMessage] = useState('');
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
+  const [resending, setResending] = useState(false);
 
-  // OTP timer — 5 minutes (300s) to match the backend OTP_TTL_MS
-  const [timer, setTimer] = useState(300);
+  // Debounce guard to prevent rapid double-clicks
+  const submittingRef = useRef(false);
+
+  // OTP timer — 10 minutes (600s) to match the backend OTP_TTL_MS
+  const [timer, setTimer] = useState(600);
   const [canResend, setCanResend] = useState(false);
   const intervalRef = useRef(null);
 
+  // OTP input refs for 6-box layout
+  const otpRefs = useRef([]);
+
   const startTimer = useCallback(() => {
-    setTimer(300);
+    setTimer(600);
     setCanResend(false);
     clearInterval(intervalRef.current);
     intervalRef.current = setInterval(() => {
@@ -37,20 +44,28 @@ const ForgotPassword = () => {
     return () => clearInterval(intervalRef.current);
   }, []);
 
-  // Step 1: Send OTP
+  // Step 1: Send OTP (with debounce guard)
   const handleSendOtp = async (e) => {
     e.preventDefault();
+    if (submittingRef.current) return;
+    submittingRef.current = true;
     setError('');
     setMessage('');
     setLoading(true);
     try {
       const { data } = await api.post('/api/auth/forgot-password', { email });
-      setMessage(data.message || 'If this email is registered, an OTP has been sent. It expires in 5 minutes.');
+      setMessage(data.message || 'OTP has been sent to your email. It expires in 10 minutes.');
       setStep(2);
       startTimer();
+      // Focus first OTP box
+      setTimeout(() => otpRefs.current[0]?.focus(), 100);
     } catch (err) {
-      const msg = err.response?.data?.error || err.response?.data?.message;
-      if (msg) {
+      const msg = err.response?.data?.message;
+      if (err.response?.status === 404) {
+        setError(msg || 'No account found with this email.');
+      } else if (err.response?.status === 429) {
+        setError(msg || 'Too many requests. Please wait a few minutes before trying again.');
+      } else if (msg) {
         setError(msg);
       } else if (err.code === 'ECONNABORTED' || err.message?.includes('timeout')) {
         setError('Request timed out. Please check your connection and try again.');
@@ -61,37 +76,105 @@ const ForgotPassword = () => {
       }
     } finally {
       setLoading(false);
+      submittingRef.current = false;
     }
   };
 
   // Resend OTP
   const handleResend = async () => {
-    if (!canResend) return;
+    if (!canResend || resending) return;
+    setResending(true);
     setError('');
     setMessage('');
     setOtp('');
+    // Clear OTP boxes
+    otpRefs.current.forEach((ref) => { if (ref) ref.value = ''; });
+    otpRefs.current[0]?.focus();
     try {
       const { data } = await api.post('/api/auth/forgot-password', { email });
-      setMessage(data.message || 'If this email is registered, an OTP has been sent. It expires in 5 minutes.');
+      setMessage(data.message || 'OTP has been resent. It expires in 10 minutes.');
       startTimer();
     } catch (err) {
-      const msg = err.response?.data?.error || err.response?.data?.message;
-      if (msg) {
+      const msg = err.response?.data?.message;
+      if (err.response?.status === 429) {
+        setError(msg || 'Too many requests. Please wait before resending.');
+      } else if (msg) {
         setError(msg);
       } else if (!err.response) {
-        setError('Network error. Please check your connection and try again.');
+        setError('Network error. Please check your internet connection and try again.');
       } else {
         setError('Something went wrong. Please try again.');
       }
+    } finally {
+      setResending(false);
     }
+  };
+
+  // Handle OTP input change with auto-advance
+  const handleOtpChange = (index, value) => {
+    if (value.length > 1) {
+      // Handle paste — fill multiple boxes
+      const digits = value.replace(/\D/g, '').slice(0, 6);
+      const newOtp = otp.split('');
+      for (let i = 0; i < digits.length && index + i < 6; i++) {
+        newOtp[index + i] = digits[i];
+        if (otpRefs.current[index + i]) {
+          otpRefs.current[index + i].value = digits[i];
+        }
+      }
+      const filledOtp = newOtp.join('').slice(0, 6);
+      setOtp(filledOtp);
+      // Focus the next empty box or the last one
+      const nextIndex = Math.min(index + digits.length, 5);
+      otpRefs.current[nextIndex]?.focus();
+      return;
+    }
+
+    const newOtp = otp.split('');
+    newOtp[index] = value;
+    const filledOtp = newOtp.join('');
+    setOtp(filledOtp);
+
+    // Auto-advance to next box
+    if (value && index < 5) {
+      otpRefs.current[index + 1]?.focus();
+    }
+  };
+
+  // Handle backspace to go to previous box
+  const handleOtpKeyDown = (index, e) => {
+    if (e.key === 'Backspace' && !otp[index] && index > 0) {
+      otpRefs.current[index - 1]?.focus();
+    }
+  };
+
+  // Handle paste event
+  const handleOtpPaste = (e) => {
+    e.preventDefault();
+    const pasted = e.clipboardData.getData('text').replace(/\D/g, '').slice(0, 6);
+    if (!pasted) return;
+
+    const newOtp = otp.split('');
+    for (let i = 0; i < pasted.length && i < 6; i++) {
+      newOtp[i] = pasted[i];
+      if (otpRefs.current[i]) {
+        otpRefs.current[i].value = pasted[i];
+      }
+    }
+    setOtp(newOtp.join(''));
+    const nextIndex = Math.min(pasted.length, 5);
+    otpRefs.current[nextIndex]?.focus();
   };
 
   // Step 2: Verify OTP on server then go to new password
   const handleVerifyOtp = async (e) => {
     e.preventDefault();
+    if (submittingRef.current) return;
+    submittingRef.current = true;
     setError('');
     if (!otp || otp.length !== 6) {
       setError('Please enter a valid 6-digit OTP.');
+      submittingRef.current = false;
       return;
     }
     setLoading(true);
@@ -99,26 +182,44 @@ const ForgotPassword = () => {
       await api.post('/api/auth/verify-otp', { email, otp });
       setStep(3);
     } catch (err) {
-      setError(err.response?.data?.message || 'OTP verification failed.');
-      if (err.response?.data?.message?.toLowerCase().includes('expired')) {
+      const msg = err.response?.data?.message;
+      if (err.response?.status === 429) {
+        setError(msg || 'Too many failed attempts. Please request a new OTP.');
+        setCanResend(true);
+        setTimer(0);
+      } else if (msg) {
+        setError(msg);
+      } else {
+        setError('OTP verification failed. Please try again.');
+      }
+      if (err.response?.data?.errorCode === 'OTP_EXPIRED') {
+        setCanResend(true);
+        setTimer(0);
+      }
+      if (err.response?.data?.errorCode === 'OTP_LOCKED') {
         setCanResend(true);
         setTimer(0);
       }
     } finally {
       setLoading(false);
+      submittingRef.current = false;
     }
   };
 
-  // Step 3: Reset password (Step 5: Expiration Check & Reset Finalization)
+  // Step 3: Reset password
   const handleResetPassword = async (e) => {
     e.preventDefault();
+    if (submittingRef.current) return;
+    submittingRef.current = true;
     setError('');
     if (newPassword.length < 6) {
       setError('Password must be at least 6 characters.');
+      submittingRef.current = false;
       return;
     }
     if (newPassword !== confirmPassword) {
       setError('Passwords do not match.');
+      submittingRef.current = false;
       return;
     }
     setLoading(true);
@@ -131,9 +232,15 @@ const ForgotPassword = () => {
       setMessage(data.message);
       setStep(4);
     } catch (err) {
-      setError(err.response?.data?.message || 'Something went wrong.');
+      const msg = err.response?.data?.message;
+      if (msg) {
+        setError(msg);
+      } else {
+        setError('Something went wrong. Please try again.');
+      }
     } finally {
       setLoading(false);
+      submittingRef.current = false;
     }
   };
 
@@ -168,10 +275,23 @@ const ForgotPassword = () => {
                 placeholder="you@example.com"
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
+                autoComplete="email"
               />
             </div>
-            <button type="submit" className="btn btn-primary" disabled={loading} style={{ width: '100%' }}>
-              {loading ? 'Sending…' : 'Send OTP'}
+            <button
+              type="submit"
+              className="btn btn-primary"
+              disabled={loading}
+              style={{ width: '100%', marginTop: 12, position: 'relative' }}
+            >
+              {loading ? (
+                <span style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8 }}>
+                  <span className="otp-spinner" />
+                  Sending…
+                </span>
+              ) : (
+                'Send OTP'
+              )}
             </button>
           </form>
         )}
@@ -181,18 +301,26 @@ const ForgotPassword = () => {
           <form onSubmit={handleVerifyOtp}>
             <div className="input-group">
               <label>OTP Code</label>
-              <input
-                type="text"
-                required
-                maxLength={6}
-                placeholder="000000"
-                value={otp}
-                onChange={(e) => setOtp(e.target.value.replace(/\D/g, '').slice(0, 6))}
-                style={{ textAlign: 'center', fontSize: 24, letterSpacing: 8 }}
-              />
+              <div className="otp-boxes" onPaste={handleOtpPaste}>
+                {[0, 1, 2, 3, 4, 5].map((i) => (
+                  <input
+                    key={i}
+                    ref={(el) => { otpRefs.current[i] = el; }}
+                    type="text"
+                    inputMode="numeric"
+                    maxLength={6}
+                    className="otp-box"
+                    value={otp[i] || ''}
+                    onChange={(e) => handleOtpChange(i, e.target.value)}
+                    onKeyDown={(e) => handleOtpKeyDown(i, e)}
+                    onFocus={(e) => e.target.select()}
+                    autoFocus={i === 0}
+                    aria-label={`OTP digit ${i + 1}`}
+                  />
+                ))}
+              </div>
             </div>
 
-            {/* Step 4: Client Control Timer Logic */}
             <div className="otp-timer">
               {timer > 0 ? (
                 <>
@@ -205,15 +333,27 @@ const ForgotPassword = () => {
               <button
                 type="button"
                 className="resend-btn"
-                disabled={!canResend}
+                disabled={!canResend || resending}
                 onClick={handleResend}
               >
-                Resend OTP
+                {resending ? 'Sending…' : 'Resend OTP'}
               </button>
             </div>
 
-            <button type="submit" className="btn btn-primary" disabled={loading} style={{ width: '100%', marginTop: 20 }}>
-              {loading ? 'Verifying…' : 'Verify OTP'}
+            <button
+              type="submit"
+              className="btn btn-primary"
+              disabled={loading || otp.length !== 6}
+              style={{ width: '100%', marginTop: 20, position: 'relative' }}
+            >
+              {loading ? (
+                <span style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8 }}>
+                  <span className="otp-spinner" />
+                  Verifying…
+                </span>
+              ) : (
+                'Verify OTP'
+              )}
             </button>
           </form>
         )}
@@ -230,6 +370,7 @@ const ForgotPassword = () => {
                 placeholder="Min 6 characters"
                 value={newPassword}
                 onChange={(e) => setNewPassword(e.target.value)}
+                autoComplete="new-password"
               />
             </div>
             <div className="input-group">
@@ -240,10 +381,23 @@ const ForgotPassword = () => {
                 placeholder="Re-enter password"
                 value={confirmPassword}
                 onChange={(e) => setConfirmPassword(e.target.value)}
+                autoComplete="new-password"
               />
             </div>
-            <button type="submit" className="btn btn-primary" disabled={loading} style={{ width: '100%' }}>
-              {loading ? 'Resetting…' : 'Reset Password'}
+            <button
+              type="submit"
+              className="btn btn-primary"
+              disabled={loading}
+              style={{ width: '100%', marginTop: 12, position: 'relative' }}
+            >
+              {loading ? (
+                <span style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8 }}>
+                  <span className="otp-spinner" />
+                  Resetting…
+                </span>
+              ) : (
+                'Reset Password'
+              )}
             </button>
           </form>
         )}
@@ -265,6 +419,47 @@ const ForgotPassword = () => {
           <Link to="/login">Back to Sign In</Link>
         </div>
       </div>
+
+      <style>{`
+        @keyframes otpSpin { to { transform: rotate(360deg); } }
+        .otp-spinner {
+          width: 16px;
+          height: 16px;
+          border: 2px solid rgba(255,255,255,0.3);
+          border-top-color: #fff;
+          border-radius: 50%;
+          animation: otpSpin 0.6s linear infinite;
+          display: inline-block;
+          flex-shrink: 0;
+        }
+        .otp-boxes {
+          display: flex;
+          gap: 8px;
+          justify-content: center;
+        }
+        .otp-box {
+          width: 48px;
+          height: 56px;
+          text-align: center;
+          font-size: 24px;
+          font-weight: 700;
+          border: 2px solid #e0e0e0;
+          border-radius: 12px;
+          background: #fafafa;
+          outline: none;
+          transition: border-color 0.2s, box-shadow 0.2s;
+          font-family: 'SF Mono', 'Fira Code', monospace;
+          caret-color: #1B5E20;
+        }
+        .otp-box:focus {
+          border-color: #1B5E20;
+          box-shadow: 0 0 0 3px rgba(27, 94, 32, 0.1);
+          background: #fff;
+        }
+        @media (max-width: 480px) {
+          .otp-box { width: 42px; height: 50px; font-size: 20px; }
+        }
+      `}</style>
     </div>
   );
 };

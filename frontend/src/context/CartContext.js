@@ -269,6 +269,11 @@ export const CartProvider = ({ children }) => {
   // does not briefly show the login modal for pages that render *after*
   // the Login page navigates away but before CartContext's worker has
   // processed the next state update.
+  //
+  // IMPORTANT: This effect previously had NO dependency array, meaning it
+  // ran on EVERY render. Combined with CartContext's state changes causing
+  // re-renders, this created a cascade of profile requests (429 errors).
+  // Now it only runs when state.user changes.
   useEffect(() => {
     const currentToken = localStorage.getItem('token');
     const prevToken = lastToken.current;
@@ -291,7 +296,7 @@ export const CartProvider = ({ children }) => {
       localStorage.removeItem('token');
       dispatch({ type: 'SET_USER', payload: null });
     }
-  });
+  }, [state.user]);
 
   const contextValue = useMemo(() => ({
     cart: state.cart, wishlist: state.wishlist, user: state.user, sessionReady: state.sessionReady,

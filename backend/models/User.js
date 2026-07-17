@@ -80,6 +80,7 @@ const userSchema = new mongoose.Schema(
     },
     otp: {
       type: String,
+      select: false,
     },
     otpExpires: {
       type: Date,
@@ -94,9 +95,20 @@ const userSchema = new mongoose.Schema(
     otpMaxReachedAt: {
       type: Date,
     },
+    otpAttemptCount: {
+      type: Number,
+      default: 0,
+    },
+    otpAttemptsLockedAt: {
+      type: Date,
+    },
   },
   { timestamps: true }
 );
+
+userSchema.index({ email: 1 });
+userSchema.index({ otpExpires: 1 }, { expireAfterSeconds: 0 });
+userSchema.index({ createdAt: -1 });
 
 userSchema.pre('save', async function (next) {
   if (!this.isModified('password')) return next();
