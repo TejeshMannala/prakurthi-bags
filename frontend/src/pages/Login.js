@@ -424,7 +424,11 @@ const Login = () => {
                         setGoogleLoading(true);
                         setGoogleError('');
                         try {
-                          window.google.accounts.id.prompt((notification) => {
+                          // `select_account` forces the account chooser to appear
+                          // every time instead of auto-reusing the last account.
+                          window.google.accounts.id.prompt(
+                            { prompt_parent_origin: window.location.origin, prompt: 'select_account' },
+                            (notification) => {
                             if (!notification) return;
                             const suppressed =
                               (notification.isNotDisplayed && notification.isNotDisplayed()) ||

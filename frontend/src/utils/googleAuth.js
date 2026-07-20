@@ -76,6 +76,12 @@ export const initGoogleIdentity = async ({ clientId, onCredential, onError }) =>
       use_fedcm_for_prompt: false,
       // itp_support improves reliability in Safari / anti-tracking browsers.
       itp_support: true,
+      // `prompt: 'select_account'` forces Google to show the account chooser
+      // every time the button is clicked. Without it, Google silently reuses
+      // the previously-signed-in account ("Continue as ...") and the user
+      // cannot switch accounts — the behavior Amazon/Flipkart-style sites avoid.
+      // This applies to the popup opened by renderButton() below.
+      prompt: 'select_account',
       callback: (response) => {
         if (process.env.NODE_ENV !== 'production') {
           console.debug('[Google] credential callback fired', !!response?.credential);
