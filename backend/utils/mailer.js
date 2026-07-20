@@ -1,14 +1,20 @@
 // Production-grade email helper.
 // Features: NO pooling (direct connections — reliable on Render cold starts),
-// 3x retry with backoff, port fallback (587→465), in-memory queue with retry,
-// classified failures (SMTP / AUTH / NETWORK / TIMEOUT / MISSING_ENV),
-// and structured logging. Never throws to the caller — email must not break
-// the surrounding flow (e.g. an order still succeeds if the receipt fails).
+// 3x retry with backoff, port fallback (465<->587), classified failures
+// (SMTP / AUTH / NETWORK / TIMEOUT / MISSING_ENV). Never throws to the caller.
 
 const nodemailer = require('nodemailer');
+const logger = require('./logger');
 
-const MAX_RETRIES = 3;
-const RETRY_BASE_DELAY = 1000; // ms, exponential backoff base
+const MAX_RETRIES = 2;
+const RETRY_BASE_DELAY = 500; // ms, exponential backoff base
+
+// Hard ceiling for the ENTIRE send + retry + port-fallback cycle. The HTTP
+// handler must never be blocked longer than this, otherwise the client times out
+// (the frontend axios timeout is 30s; Gmail from Render can hang far longer on
+// a blocked SMTP connection). Anything beyond this is treated as a failure and
+// the request proceeds (OTP was already saved to the DB).
+const SEND_HARD_TIMEOUT_MS = 12000;
 
 let cachedTransporter = null;
 let verificationState = { ok: null, reason: null, at: 0 };
@@ -20,7 +26,7 @@ const getCredentials = () => ({
   user: process.env.SMTP_USER || process.env.EMAIL_USER,
   pass: process.env.SMTP_PASS || process.env.EMAIL_PASS,
   host: process.env.SMTP_HOST || process.env.EMAIL_HOST || 'smtp.gmail.com',
-  port: Number(process.env.SMTP_PORT || process.env.EMAIL_PORT || 587),
+  port: Number(process.env.SMTP_PORT || process.env.EMAIL_PORT || 465),
 });
 
 const createTransporter = (portOverride) => {
@@ -29,9 +35,6 @@ const createTransporter = (portOverride) => {
   const port = portOverride || getCredentials().port;
   if (!user || !pass || /YOUR_|your_/.test(pass)) return null;
 
-  // No pooling — direct connections are more reliable for transactional
-  // email on Render free tier cold starts. Pooled connections go stale
-  // during the 15-min idle window and fail with NETWORK_ERROR.
   cachedTransporter = nodemailer.createTransport({
     host,
     port,
@@ -39,18 +42,16 @@ const createTransporter = (portOverride) => {
     requireTLS: port !== 465,
     auth: { user, pass },
     tls: { rejectUnauthorized: false },
-    // Significantly longer timeouts for Render free tier cold starts
-    // (backend wakes from sleep → DNS resolution → TCP → SMTP handshake)
-    connectionTimeout: 60000,
-    greetingTimeout: 30000,
-    socketTimeout: 60000,
+    // Keep these short so a blocked/dead SMTP connection fails fast instead of
+    // hanging the request for 30-60s.
+    connectionTimeout: 8000,
+    greetingTimeout: 8000,
+    socketTimeout: 10000,
   });
-  console.log(`[mailer] Transporter created: ${host}:${port} (secure=${port === 465})`);
+  logger.debug(`SMTP transporter created: ${host}:${port}`);
   return cachedTransporter;
 };
 
-// Destroy cached transporter so next send creates a fresh connection.
-// Called on NETWORK_ERROR to avoid reusing a dead socket.
 const destroyTransporter = () => {
   if (cachedTransporter) {
     try { cachedTransporter.close(); } catch {}
@@ -59,7 +60,6 @@ const destroyTransporter = () => {
   }
 };
 
-// Classify a low-level SMTP/network error into a stable reason code.
 const classify = (err) => {
   const msg = (err && err.message) || '';
   const code = err?.code || '';
@@ -95,31 +95,28 @@ const verifyTransporter = async (portOverride) => {
     if (!portOverride) {
       verificationState = { ok: false, reason, at: now };
     }
-    console.error(`[mailer] SMTP verify failed (${reason}) on port ${getCredentials().port}${portOverride ? '→' + portOverride : ''}:`, err.code || '', err.message || err);
+    logger.error(`SMTP verify failed (${reason}) port ${getCredentials().port}${portOverride ? '->' + portOverride : ''}: ${err.message}`);
     return { ok: false, reason };
   }
 };
 
 const logReason = (reason) => {
-  const { host, port, user } = getCredentials();
+  const { host, port } = getCredentials();
   switch (reason) {
     case 'MISSING_ENV':
-      console.error('[mailer] EMAIL NOT CONFIGURED — set SMTP_USER and SMTP_PASS (or EMAIL_USER and EMAIL_PASS) in Render dashboard env vars.');
-      console.error('[mailer] For Gmail: use a 16-char App Password from https://myaccount.google.com/apppasswords');
-      console.error('[mailer] Required env vars: SMTP_HOST (default: smtp.gmail.com), SMTP_PORT (default: 587), SMTP_USER (your email), SMTP_PASS (app password)');
+      logger.error('SMTP not configured — set SMTP_USER and SMTP_PASS in Render dashboard');
       break;
     case 'AUTH_ERROR':
-      console.error('[mailer] SMTP AUTHENTICATION ERROR — verify SMTP_USER/SMTP_PASS. For Gmail use a 16-char App Password, not the account password.');
+      logger.error('SMTP auth failed — verify SMTP_USER/SMTP_PASS (use Gmail App Password)');
       break;
     case 'NETWORK_ERROR':
-      console.error(`[mailer] SMTP NETWORK ERROR — cannot reach ${host}:${port}. Possible causes: Render cold start, DNS blocked, firewall, or SMTP port blocked.`);
-      console.error('[mailer] If using Gmail, try port 465 (SSL) instead of 587 (STARTTLS). Set SMTP_PORT=465 in Render env vars.');
+      logger.error(`SMTP network error — cannot reach ${host}:${port}. Try port 465 (SSL) if 587 is blocked`);
       break;
     case 'TIMEOUT':
-      console.error(`[mailer] SMTP TIMEOUT — ${host}:${port} responded too slowly.`);
+      logger.error(`SMTP timeout — ${host}:${port} responded too slowly`);
       break;
     default:
-      console.error('[mailer] SMTP ERROR — generic failure while sending.');
+      logger.error('SMTP error — generic failure while sending');
   }
 };
 
@@ -127,18 +124,20 @@ const logReason = (reason) => {
 const sendEmail = async ({ to, subject, html, text }) => {
   if (!to) return { ok: false, reason: 'INVALID_RECIPIENT' };
 
-  const verification = await verifyTransporter();
+  let verification = await verifyTransporter();
   if (!verification.ok) {
     logReason(verification.reason);
 
-    // Port fallback: if NETWORK_ERROR on port 587, try port 465 (SSL)
-    if (verification.reason === 'NETWORK_ERROR' && getCredentials().port === 587) {
-      console.log('[mailer] Attempting port fallback: 587 (STARTTLS) → 465 (SSL)');
+    const currentPort = getCredentials().port;
+    const fallbackPort = currentPort === 587 ? 465 : currentPort === 465 ? 587 : null;
+
+    if (verification.reason === 'NETWORK_ERROR' && fallbackPort) {
+      logger.debug(`SMTP port fallback: ${currentPort} -> ${fallbackPort}`);
       destroyTransporter();
-      const fallback = await verifyTransporter(465);
+      const fallback = await verifyTransporter(fallbackPort);
       if (fallback.ok) {
         verificationState = { ok: true, reason: null, at: Date.now() };
-        // Proceed with port 465 transporter
+        verification = { ok: true, reason: null };
       } else {
         return { ok: false, reason: verification.reason };
       }
@@ -162,14 +161,13 @@ const sendEmail = async ({ to, subject, html, text }) => {
       return { ok: true, reason: null };
     } catch (err) {
       const reason = classify(err);
-      console.error(`[mailer] send attempt ${attempt}/${MAX_RETRIES} failed (${reason}):`, err.code || '', err.message || err);
+      logger.error(`SMTP send attempt ${attempt}/${MAX_RETRIES} failed (${reason}): ${err.message}`);
       if (attempt < MAX_RETRIES) {
-        const delay = RETRY_BASE_DELAY * 2 ** (attempt - 1); // 1s, 2s, 4s
-        console.log(`[mailer] Retrying in ${delay}ms...`);
+        const delay = RETRY_BASE_DELAY * 2 ** (attempt - 1);
+        logger.debug(`SMTP retry in ${delay}ms`);
         await sleep(delay);
       } else {
         logReason(reason);
-        // Force re-verify next time (SMTP session may be dead after cold start).
         destroyTransporter();
         return { ok: false, reason };
       }
@@ -178,8 +176,35 @@ const sendEmail = async ({ to, subject, html, text }) => {
   return { ok: false, reason: 'SMTP_ERROR' };
 };
 
-// Fire-and-forget wrapper used by non-critical mail (order receipts, etc.).
-// Returns true/false without throwing.
+// Race a promise against a hard timeout. Resolves to `timeoutValue` if the
+// wrapped promise does not settle in time (so callers never hang forever).
+const withTimeout = (promise, ms, timeoutValue) =>
+  new Promise((resolve) => {
+    const timer = setTimeout(() => {
+      logger.warn(`SMTP operation timed out after ${ms}ms`);
+      resolve(timeoutValue);
+    }, ms);
+    Promise.resolve(promise).then(
+      (val) => { clearTimeout(timer); resolve(val); },
+      (err) => { clearTimeout(timer); throw err; }
+    );
+  });
+
+// Bounded wrapper used by request handlers. Guarantees the call settles within
+// SEND_HARD_TIMEOUT_MS and returns { ok, reason } — it NEVER rejects or hangs.
+const sendEmailBounded = async (opts) => {
+  try {
+    return await withTimeout(sendEmail(opts), SEND_HARD_TIMEOUT_MS, {
+      ok: false,
+      reason: 'TIMEOUT',
+    });
+  } catch (err) {
+    logger.error('sendEmailBounded unexpected error:', err?.message || err);
+    return { ok: false, reason: 'SMTP_ERROR' };
+  }
+};
+
+// Fire-and-forget wrapper for non-critical mail (order receipts, etc.)
 const sendEmailSafe = async (opts) => {
   const result = await sendEmail(opts);
   return result.ok;
@@ -228,4 +253,4 @@ const sendOrderReceipt = async (order, payment) => {
   }
 };
 
-module.exports = { sendEmail, sendEmailSafe, sendOrderReceipt, verifyTransporter };
+module.exports = { sendEmail, sendEmailBounded, sendEmailSafe, sendOrderReceipt, verifyTransporter };
