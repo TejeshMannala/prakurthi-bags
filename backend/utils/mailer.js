@@ -22,24 +22,39 @@ const VERIFY_TTL = 5 * 60 * 1000; // re-verify at most once per 5 minutes
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
-const getCredentials = () => ({
-  user: process.env.SMTP_USER || process.env.EMAIL_USER,
-  pass: process.env.SMTP_PASS || process.env.EMAIL_PASS,
-  host: process.env.SMTP_HOST || process.env.EMAIL_HOST || 'smtp.gmail.com',
-  port: Number(process.env.SMTP_PORT || process.env.EMAIL_PORT || 465),
-});
+const getCredentials = () => {
+  const user = process.env.SMTP_USER || process.env.EMAIL_USER;
+  const pass = process.env.SMTP_PASS || process.env.EMAIL_PASS;
+  const host = process.env.SMTP_HOST || process.env.EMAIL_HOST || 'smtp.gmail.com';
+  // Prefer an explicit SMTP_PORT; default to 465 (implicit SSL). Gmail SMTP
+  // from Render is reliably reachable on 465 (secure SSL) but frequently times
+  // out on 587 (STARTTLS), so 465 must be the default/first choice.
+  const port = Number(process.env.SMTP_PORT || process.env.EMAIL_PORT || 465);
+  // Honor an explicit SMTP_SECURE flag; otherwise derive from the port
+  // (465 => implicit SSL, anything else => STARTTLS).
+  const secureEnv = process.env.SMTP_SECURE;
+  const secure = secureEnv === undefined
+    ? port === 465
+    : String(secureEnv).toLowerCase() !== 'false' && secureEnv !== '0';
+  return { user, pass, host, port, secure };
+};
 
-const createTransporter = (portOverride) => {
-  if (cachedTransporter && !portOverride) return cachedTransporter;
-  const { user, pass, host } = getCredentials();
-  const port = portOverride || getCredentials().port;
+const createTransporter = (portOverride, secureOverride) => {
+  if (cachedTransporter && !portOverride && secureOverride === undefined) return cachedTransporter;
+  const creds = getCredentials();
+  const user = creds.user;
+  const pass = creds.pass;
+  const host = creds.host;
+  const port = portOverride || creds.port;
+  const secure = secureOverride === undefined ? creds.secure : secureOverride;
   if (!user || !pass || /YOUR_|your_/.test(pass)) return null;
 
   cachedTransporter = nodemailer.createTransport({
     host,
     port,
-    secure: port === 465,
-    requireTLS: port !== 465,
+    secure,
+    // requireTLS only meaningful when not using implicit SSL (port 465).
+    requireTLS: !secure,
     auth: { user, pass },
     tls: { rejectUnauthorized: false },
     // Keep these short so a blocked/dead SMTP connection fails fast instead of
@@ -48,7 +63,7 @@ const createTransporter = (portOverride) => {
     greetingTimeout: 8000,
     socketTimeout: 10000,
   });
-  logger.debug(`SMTP transporter created: ${host}:${port}`);
+  logger.debug(`SMTP transporter created: ${host}:${port} secure=${secure}`);
   return cachedTransporter;
 };
 
@@ -87,7 +102,9 @@ const verifyTransporter = async (portOverride) => {
     return { ok: false, reason };
   }
   try {
+    logger.info('[SMTP] connecting to ' + getCredentials().host + ':' + getCredentials().port + ' secure=' + transporter.options.secure);
     await transporter.verify();
+    logger.info('[SMTP] verified');
     verificationState = { ok: true, reason: null, at: now };
     return { ok: true, reason: null };
   } catch (err) {
@@ -95,7 +112,7 @@ const verifyTransporter = async (portOverride) => {
     if (!portOverride) {
       verificationState = { ok: false, reason, at: now };
     }
-    logger.error(`SMTP verify failed (${reason}) port ${getCredentials().port}${portOverride ? '->' + portOverride : ''}: ${err.message}`);
+    logger.error(`[SMTP] verify failed (${reason}) port ${getCredentials().port}${portOverride ? '->' + portOverride : ''}: ${err.message}`);
     return { ok: false, reason };
   }
 };
@@ -128,13 +145,18 @@ const sendEmail = async ({ to, subject, html, text }) => {
   if (!verification.ok) {
     logReason(verification.reason);
 
+    // Try the OTHER well-known Gmail port before giving up. Default port is 465
+    // (secure SSL). If that has a NETWORK error, attempt 587 (STARTTLS); if the
+    // default was 587, attempt 465. This maximizes the chance of a working path
+    // from Render's network without wasting time on both when auth is the issue.
     const currentPort = getCredentials().port;
-    const fallbackPort = currentPort === 587 ? 465 : currentPort === 465 ? 587 : null;
+    const fallbackPort = currentPort === 465 ? 587 : 465;
+    const fallbackSecure = fallbackPort === 465;
 
-    if (verification.reason === 'NETWORK_ERROR' && fallbackPort) {
-      logger.debug(`SMTP port fallback: ${currentPort} -> ${fallbackPort}`);
+    if (verification.reason === 'NETWORK_ERROR') {
+      logger.debug(`[SMTP] port fallback: ${currentPort} -> ${fallbackPort}`);
       destroyTransporter();
-      const fallback = await verifyTransporter(fallbackPort);
+      const fallback = await verifyTransporter(fallbackPort, fallbackSecure);
       if (fallback.ok) {
         verificationState = { ok: true, reason: null, at: Date.now() };
         verification = { ok: true, reason: null };
@@ -151,6 +173,7 @@ const sendEmail = async ({ to, subject, html, text }) => {
 
   for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
     try {
+      logger.info(`[SMTP] sending email to ${to} (attempt ${attempt}/${MAX_RETRIES})`);
       await transporter.sendMail({
         from: `"Prakruthi Bags" <${user}>`,
         to,
@@ -158,6 +181,7 @@ const sendEmail = async ({ to, subject, html, text }) => {
         html,
         text,
       });
+      logger.info(`[SMTP] email sent successfully to ${to}`);
       return { ok: true, reason: null };
     } catch (err) {
       const reason = classify(err);
@@ -210,6 +234,18 @@ const sendEmailSafe = async (opts) => {
   return result.ok;
 };
 
+// Background sender used by request handlers (e.g. OTP). It is BOUNDED so it
+// can never hang, but the caller does NOT await it — the HTTP response is sent
+// first (after the OTP is saved), so a slow/unreachable SMTP server can never
+// cause the client's request to time out or be canceled.
+const sendEmailBackground = (opts) => {
+  sendEmailBounded(opts)
+    .then((r) => {
+      if (!r.ok) logger.error(`[SMTP] background send failed to ${opts.to}: ${r.reason}`);
+    })
+    .catch((e) => logger.error('[SMTP] background send unexpected error:', e?.message || e));
+};
+
 const sendOrderReceipt = async (order, payment) => {
   try {
     const email = order.shippingAddress?.email || order.user?.email;
@@ -253,4 +289,4 @@ const sendOrderReceipt = async (order, payment) => {
   }
 };
 
-module.exports = { sendEmail, sendEmailBounded, sendEmailSafe, sendOrderReceipt, verifyTransporter };
+module.exports = { sendEmail, sendEmailBounded, sendEmailBackground, sendEmailSafe, sendOrderReceipt, verifyTransporter };

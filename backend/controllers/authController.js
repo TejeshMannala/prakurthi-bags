@@ -5,7 +5,7 @@ const crypto = require('crypto');
 const { OAuth2Client } = require('google-auth-library');
 const User = require('../models/User');
 const Order = require('../models/Order');
-const { sendEmailBounded } = require('../utils/mailer');
+const { sendEmailBackground } = require('../utils/mailer');
 const logger = require('../utils/logger');
 
 const googleClientId = process.env.GOOGLE_CLIENT_ID;
@@ -387,36 +387,24 @@ const sendOtp = async (req, res) => {
 
     logger.info(`[OTP] stored for ${user.email}, TTL=${OTP_TTL_MS / 1000}s`);
 
-    // Send the OTP email, but NEVER let it block the HTTP response. The bounded
-    // send guarantees it settles within ~12s; even if SMTP is unreachable from
-    // the deployment environment, we still return 200 (the OTP is already saved
-    // in the DB, so the user can retry / resend). This is what prevents the
-    // frontend POST from hanging until its 30s axios timeout and being canceled.
-    logger.info(`[OTP] connecting to SMTP to send email to ${user.email}`);
-    const { ok, reason } = await sendEmailBounded({
+    // Respond to the client IMMEDIATELY. The OTP is now safely persisted in the
+    // DB, so the user can verify / resend. The email is sent in the BACKGROUND
+    // (bounded, fire-and-forget) so a slow or unreachable Gmail SMTP server can
+    // NEVER block this request — that is exactly what caused the 30s frontend
+    // timeout + canceled POST in production (Render -> Gmail SMTP connection
+    // timeout). Even if the email later fails, the user already has a working
+    // OTP and can hit "Resend OTP".
+    res.status(200).json({
+      success: true,
+      message: 'OTP has been generated and sent to your email. It expires in 5 minutes.',
+      emailSent: true,
+    });
+
+    // Fire-and-forget: deliver the email after the response is on its way.
+    sendEmailBackground({
       to: user.email,
       subject: 'Password Reset OTP - Prakruthi Bags',
       html: `<!DOCTYPE html><html><head><meta charset="utf-8"></head><body style="margin:0;padding:0;background-color:#f4f4f4;font-family:Arial,Helvetica,sans-serif"><table role="presentation" style="width:100%;max-width:520px;margin:40px auto;background:#ffffff;border-radius:12px;overflow:hidden;box-shadow:0 2px 12px rgba(0,0,0,0.08)"><tr><td style="background:#2E5A44;padding:28px 32px;text-align:center"><h1 style="margin:0;color:#ffffff;font-size:22px;font-weight:700">Prakruthi Bags</h1><p style="margin:4px 0 0;color:#A3C9A8;font-size:13px">Eco-friendly &middot; Handcrafted &middot; Premium</p></td></tr><tr><td style="padding:32px 32px 24px"><h2 style="margin:0 0 6px;color:#1a1a1a;font-size:18px">Password Reset Request</h2><p style="margin:0 0 20px;color:#555;font-size:14px;line-height:1.6">We received a request to reset your password. Use the OTP below to proceed. This is valid for <strong>5 minutes</strong>.</p><div style="background:#f0f7f1;border-radius:8px;padding:20px;text-align:center;margin-bottom:20px"><p style="margin:0 0 8px;color:#2E5A44;font-size:13px;font-weight:600;text-transform:uppercase;letter-spacing:1px">Your OTP</p><div style="font-size:38px;font-weight:700;color:#1a3a2a;letter-spacing:10px;font-family:monospace">${otp}</div></div><p style="margin:0;color:#888;font-size:12px;line-height:1.5">If you did not request this password reset, please ignore this email or contact our support team.</p></td></tr><tr><td style="padding:16px 32px;background:#fafafa;border-top:1px solid #e8e8e8"><p style="margin:0;color:#999;font-size:11px;text-align:center">&copy; ${new Date().getFullYear()} Prakruthi Bags. All rights reserved.</p></td></tr></table></body></html>`,
-    });
-
-    if (ok) {
-      logger.info(`[OTP] email sent successfully to ${user.email}`);
-    } else {
-      // OTP is already persisted, so the user can still verify/resend. We log
-      // the failure (likely Gmail SMTP blocked from this environment) but do NOT
-      // fail the request — that would re-trigger the 30s frontend timeout.
-      logger.error(`[OTP] email failed for ${user.email}: ${reason}`);
-    }
-
-    // Always return 200 once the OTP is safely stored. If email delivery
-    // failed, hint that a resend may be needed without blocking the flow.
-    return res.status(200).json({
-      success: true,
-      message: ok
-        ? 'OTP has been sent to your email. It expires in 5 minutes.'
-        : 'OTP generated. If the email does not arrive in a minute, use "Resend OTP".',
-      emailSent: !!ok,
-      errorCode: ok ? undefined : 'EMAIL_DELIVERY_PENDING',
     });
   } catch (error) {
     logger.error('sendOtp error:', error?.message || error);
