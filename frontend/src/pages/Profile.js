@@ -43,6 +43,7 @@ const Profile = () => {
     setEditForm({
       name: user.name || '',
       phone: user.phone || '',
+      avatar: user.avatar || '',
       street: user.address?.street || '',
       city: user.address?.city || '',
       state: user.address?.state || '',
@@ -60,6 +61,7 @@ const Profile = () => {
       const { data } = await api.put('/api/auth/profile', {
         name: editForm.name.trim(),
         phone: editForm.phone.trim(),
+        avatar: editForm.avatar.trim(),
         address: {
           street: editForm.street.trim(),
           city: editForm.city.trim(),
@@ -102,9 +104,31 @@ const Profile = () => {
         transition={{ duration: 0.4 }}
       >
         <div className="profile-header">
-          <div>
-            <h1 className="page-title" style={{ marginBottom: 4 }}>My Profile</h1>
-            <p style={{ color: '#6b7280' }}>Welcome back, {user.name}.</p>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 14 }}>
+            <div
+              style={{
+                width: 64,
+                height: 64,
+                borderRadius: '50%',
+                flexShrink: 0,
+                background: user.avatar ? `url(${user.avatar}) center/cover` : '#1B5E20',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                color: '#fff',
+                fontSize: 24,
+                fontWeight: 700,
+                boxShadow: '0 2px 8px rgba(0,0,0,0.12)',
+                overflow: 'hidden',
+              }}
+              aria-label="Profile picture"
+            >
+              {!user.avatar && (user.name ? user.name.charAt(0).toUpperCase() : <FiUser />)}
+            </div>
+            <div>
+              <h1 className="page-title" style={{ marginBottom: 4 }}>My Profile</h1>
+              <p style={{ color: '#6b7280' }}>Welcome back, {user.name}.</p>
+            </div>
           </div>
           <button onClick={handleLogout} className="btn btn-outline" style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
             <FiLogOut /> Sign Out
@@ -135,6 +159,10 @@ const Profile = () => {
               <div>
                 <label style={{ display: 'block', fontSize: 12, fontWeight: 600, color: '#6b7280', marginBottom: 4 }}>Name</label>
                 <input type="text" value={editForm.name} onChange={(e) => setEditForm({ ...editForm, name: e.target.value })} style={{ width: '100%', padding: '10px 12px', border: '1.5px solid #e5e7eb', borderRadius: 8, fontSize: 14 }} />
+              </div>
+              <div style={{ gridColumn: '1 / -1' }}>
+                <label style={{ display: 'block', fontSize: 12, fontWeight: 600, color: '#6b7280', marginBottom: 4 }}>Profile Picture URL</label>
+                <input type="url" value={editForm.avatar} onChange={(e) => setEditForm({ ...editForm, avatar: e.target.value })} placeholder="https://..." style={{ width: '100%', padding: '10px 12px', border: '1.5px solid #e5e7eb', borderRadius: 8, fontSize: 14 }} />
               </div>
               <div>
                 <label style={{ display: 'block', fontSize: 12, fontWeight: 600, color: '#6b7280', marginBottom: 4 }}>Phone</label>
@@ -189,6 +217,12 @@ const Profile = () => {
                 <div className="profile-detail">
                   <FiPackage size={16} />
                   <span><strong>Address:</strong> {[user.address.street, user.address.city, user.address.state, user.address.zip].filter(Boolean).join(', ')}</span>
+                </div>
+              )}
+              {user.createdAt && (
+                <div className="profile-detail">
+                  <FiUser size={16} />
+                  <span><strong>Date Joined:</strong> {new Date(user.createdAt).toLocaleDateString('en-IN', { day: 'numeric', month: 'long', year: 'numeric' })}</span>
                 </div>
               )}
             </div>

@@ -109,8 +109,10 @@ const verifyTransporter = async (portOverride) => {
     return { ok: true, reason: null };
   } catch (err) {
     const reason = classify(err);
-    if (!portOverride) {
-      verificationState = { ok: false, reason, at: now };
+    // Do NOT permanently cache a network/transient failure — clear it so the next
+    // request retries instead of reusing a stale "failed" result for 5 minutes.
+    if (!portOverride && reason !== 'MISSING_ENV' && reason !== 'AUTH_ERROR') {
+      verificationState = { ok: null, reason: null, at: 0 };
     }
     logger.error(`[SMTP] verify failed (${reason}) port ${getCredentials().port}${portOverride ? '->' + portOverride : ''}: ${err.message}`);
     return { ok: false, reason };
@@ -144,28 +146,11 @@ const sendEmail = async ({ to, subject, html, text }) => {
   let verification = await verifyTransporter();
   if (!verification.ok) {
     logReason(verification.reason);
-
-    // Try the OTHER well-known Gmail port before giving up. Default port is 465
-    // (secure SSL). If that has a NETWORK error, attempt 587 (STARTTLS); if the
-    // default was 587, attempt 465. This maximizes the chance of a working path
-    // from Render's network without wasting time on both when auth is the issue.
-    const currentPort = getCredentials().port;
-    const fallbackPort = currentPort === 465 ? 587 : 465;
-    const fallbackSecure = fallbackPort === 465;
-
-    if (verification.reason === 'NETWORK_ERROR') {
-      logger.debug(`[SMTP] port fallback: ${currentPort} -> ${fallbackPort}`);
-      destroyTransporter();
-      const fallback = await verifyTransporter(fallbackPort, fallbackSecure);
-      if (fallback.ok) {
-        verificationState = { ok: true, reason: null, at: Date.now() };
-        verification = { ok: true, reason: null };
-      } else {
-        return { ok: false, reason: verification.reason };
-      }
-    } else {
-      return { ok: false, reason: verification.reason };
-    }
+    // We deliberately do NOT fall back to port 587: from Render's network
+    // Gmail's 587 (STARTTLS) times out, while 465 (implicit SSL) is the
+    // reliable path. Flipping to 587 only wastes ~8s and still fails. If the
+    // configured port is wrong the error is logged and surfaced to the caller.
+    return { ok: false, reason: verification.reason };
   }
 
   const transporter = cachedTransporter;
@@ -241,7 +226,8 @@ const sendEmailSafe = async (opts) => {
 const sendEmailBackground = (opts) => {
   sendEmailBounded(opts)
     .then((r) => {
-      if (!r.ok) logger.error(`[SMTP] background send failed to ${opts.to}: ${r.reason}`);
+      if (r.ok) logger.info(`[SMTP] background OTP email delivered to ${opts.to}`);
+      else logger.error(`[SMTP] background OTP email FAILED to ${opts.to}: ${r.reason} (OTP is still valid in DB — user can Resend)`);
     })
     .catch((e) => logger.error('[SMTP] background send unexpected error:', e?.message || e));
 };

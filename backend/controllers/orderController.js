@@ -330,13 +330,24 @@ const trackOrderPublic = async (req, res) => {
       return res.status(400).json({ message: 'Order ID is required.' });
     }
 
+    // Public tracking is order-only (status / items). We deliberately DO NOT
+    // populate the user's name/email here: that PII belongs to the order owner
+    // and must not be exposed to anyone who guesses an order ID. Use the
+    // authenticated /api/orders/track/:id endpoint to see full details.
     const order = await Order.findOne({ orderId: orderId.trim().toUpperCase() })
       .populate('products.product', 'name price images thumbnail slug')
-      .populate('user', 'name email')
       .lean();
 
     if (!order) {
       return res.status(404).json({ message: 'Order not found. Please check the Order ID and try again.' });
+    }
+
+    // Never leak the owner's identity on the public path.
+    if (order.user && typeof order.user === 'object') {
+      delete order.user.name;
+      delete order.user.email;
+    } else if (order.user) {
+      order.user = undefined;
     }
 
     res.json(await withPayment(order));

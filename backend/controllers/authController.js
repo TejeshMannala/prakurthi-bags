@@ -142,7 +142,8 @@ const login = async (req, res) => {
     }
 
     const token = signToken(user._id, user.role);
-    logger.info(`Login OK: ${user.email} (role=${user.role})`);
+    logger.info(`[AUTH] Login successful: ${user.email} (role=${user.role})`);
+    logger.info(`[AUTH] JWT generated for user ${user._id}`);
     res.json(serializeUser(user, token));
   } catch (error) {
     logger.error('Login error:', error.message);
@@ -252,6 +253,7 @@ const googleLogin = async (req, res) => {
 
     const token = signToken(user._id, user.role);
     logger.info(`[Google] login OK: ${normalizedEmail} (role=${user.role}, userId=${user._id})`);
+    logger.info(`[AUTH] JWT generated for user ${user._id}`);
     res.json(serializeUserLite(user, token));
   } catch (error) {
     logger.error('Google login error:', error.message);
@@ -298,6 +300,7 @@ const getClientIp = (req) =>
 const sendOtp = async (req, res) => {
   try {
     const { email } = req.body;
+    logger.info(`[OTP] Forgot Password request received for: ${email}`);
 
     if (!email || !isValidEmail(email)) {
       return res.status(400).json({ success: false, message: 'Invalid email address.', errorCode: 'INVALID_EMAIL' });
@@ -337,6 +340,7 @@ const sendOtp = async (req, res) => {
         errorCode: 'EMAIL_NOT_FOUND',
       });
     }
+    logger.info(`[OTP] User found: ${user.email}`);
 
     // ---- Resend cooldown + max resend cap ----
     if (user.otpRequestedAt && now - new Date(user.otpRequestedAt).getTime() < OTP_RESEND_COOLDOWN_MS) {
@@ -368,6 +372,7 @@ const sendOtp = async (req, res) => {
     }
 
     // Generate a new OTP
+    logger.info('[OTP] Generating OTP...');
     const otp = crypto.randomInt(100000, 1000000).toString();
     const salt = await bcrypt.genSalt(10);
     const hashedOtp = await bcrypt.hash(otp, salt);
@@ -385,7 +390,7 @@ const sendOtp = async (req, res) => {
     }
     await user.save();
 
-    logger.info(`[OTP] stored for ${user.email}, TTL=${OTP_TTL_MS / 1000}s`);
+    logger.info(`[OTP] OTP saved for ${user.email}, TTL=${OTP_TTL_MS / 1000}s`);
 
     // Respond to the client IMMEDIATELY. The OTP is now safely persisted in the
     // DB, so the user can verify / resend. The email is sent in the BACKGROUND
@@ -551,6 +556,8 @@ const getProfile = async (req, res) => {
       return res.status(404).json({ success: false, message: 'User not found.', errorCode: 'USER_NOT_FOUND' });
     }
     const orders = await Order.find({ user: req.user._id }).sort({ createdAt: -1 }).limit(20).lean();
+    logger.info(`[AUTH] Profile fetched for ${user.email} (orders: ${orders.length})`);
+    logger.info(`[AUTH] Orders fetched for user ${req.user._id}: ${orders.length}`);
     res.json({ ...serializeUser(user), orders });
   } catch (error) {
     logger.error('Get profile error:', error.message);
@@ -614,7 +621,7 @@ const refreshToken = async (req, res) => {
 const logout = async (req, res) => {
   try {
     await User.findByIdAndUpdate(req.user._id, { $inc: { refreshTokenVersion: 1 } });
-    logger.debug(`Logout: ${req.user.email}`);
+    logger.info(`[AUTH] Logout successful: ${req.user.email}`);
     res.json({ success: true, message: 'Logged out successfully.' });
   } catch (error) {
     res.status(500).json({ success: false, message: error.message, errorCode: 'SERVER_ERROR' });
