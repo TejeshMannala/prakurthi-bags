@@ -394,15 +394,23 @@ const sendOtp = async (req, res) => {
 
     // Respond to the client IMMEDIATELY. The OTP is now safely persisted in the
     // DB, so the user can verify / resend. The email is sent in the BACKGROUND
-    // (bounded, fire-and-forget) so a slow or unreachable Gmail SMTP server can
+    // (bounded, fire-and-forget) so a slow/unreachable SMTP server can
     // NEVER block this request — that is exactly what caused the 30s frontend
     // timeout + canceled POST in production (Render -> Gmail SMTP connection
     // timeout). Even if the email later fails, the user already has a working
     // OTP and can hit "Resend OTP".
+    const smtpUser = process.env.SMTP_USER || process.env.EMAIL_USER;
+    const smtpPass = process.env.SMTP_PASS || process.env.EMAIL_PASS;
+    const smtpConfigured = !!smtpUser && !!smtpPass && !/YOUR_|your_/.test(smtpPass);
+    if (!smtpConfigured) {
+      logger.error('[OTP] SMTP NOT configured (set SMTP_USER + SMTP_PASS in the Render dashboard). OTP is saved in DB but the email CANNOT be delivered — user must use "Resend OTP" after configuring, or check spam.');
+    }
     res.status(200).json({
       success: true,
-      message: 'OTP has been generated and sent to your email. It expires in 5 minutes.',
-      emailSent: true,
+      message: smtpConfigured
+        ? 'OTP has been generated and sent to your email. It expires in 5 minutes.'
+        : 'OTP has been generated. If you do not receive the email shortly, check your spam folder or use "Resend OTP" (email service may not be configured).',
+      emailSent: smtpConfigured,
     });
 
     // Fire-and-forget: deliver the email after the response is on its way.

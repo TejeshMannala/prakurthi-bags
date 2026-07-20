@@ -1,12 +1,14 @@
 const dotenv = require('dotenv');
 dotenv.config();
 
+const logger = require('./utils/logger');
+
 process.on('unhandledRejection', (reason) => {
-  console.error('UNHANDLED REJECTION:', reason instanceof Error ? reason.stack : reason);
+  logger.error('UNHANDLED REJECTION:', reason instanceof Error ? reason.stack : reason);
 });
 
 process.on('uncaughtException', (err) => {
-  console.error('UNCAUGHT EXCEPTION:', err.stack || err.message || err);
+  logger.error('UNCAUGHT EXCEPTION:', err.stack || err.message || err);
 });
 
 const express = require('express');
@@ -48,66 +50,66 @@ const settingsRoutes = require('./routes/settingsRoutes');
 const { protect, adminOnly } = require('./middleware/authMiddleware');
 const { setupSocket } = require('./socket/socketHandler');
 
+// ---------------------------------------------------------------------------
+// Validate required env vars (hard fail)
+// ---------------------------------------------------------------------------
 const hasPlaceholder = (val) => !val || val.startsWith('YOUR_') || val.startsWith('your_');
+
+// Support MONGODB_URI as an alias for MONGO_URI (common on Render/Heroku).
+if (!process.env.MONGO_URI && process.env.MONGODB_URI) {
+  process.env.MONGO_URI = process.env.MONGODB_URI;
+}
 
 const REQUIRED_ENV = ['JWT_SECRET', 'MONGO_URI'];
 const missing = REQUIRED_ENV.filter((k) => hasPlaceholder(process.env[k]));
 if (missing.length > 0) {
-  console.error('FATAL: Missing required environment variables:', missing.join(', '));
-  console.error('  Set these in backend/.env before starting the server.');
+  logger.error(`FATAL: Missing required environment variables: ${missing.join(', ')}`);
+  logger.error('  Set these in backend/.env (or the Render dashboard) before starting the server.');
   process.exit(1);
 }
 
 if (!process.env.JWT_SECRET || process.env.JWT_SECRET.length < 10) {
-  console.error('FATAL: JWT_SECRET is missing or too short (min 10 chars)');
+  logger.error('FATAL: JWT_SECRET is missing or too short (min 10 chars)');
   process.exit(1);
 }
 
-const checkPlaceholder = (val, label) => {
-  if (val && (val.includes('YOUR_') || val.includes('your_'))) {
-    console.warn('  ⚠', label, 'has placeholder credentials — update in .env');
-    return false;
-  }
-  return !!val;
-};
+// Validate Google OAuth env vars (warn, don't hard-fail — login degrades
+// gracefully, but we make the misconfiguration obvious at startup).
+if (!process.env.GOOGLE_CLIENT_ID || hasPlaceholder(process.env.GOOGLE_CLIENT_ID)) {
+  logger.warn('GOOGLE_CLIENT_ID is not set — Google login will be disabled. Set it in backend/.env / Render dashboard.');
+} else if (!/^\d+-[a-z0-9]+\.apps\.googleusercontent\.com$/.test(process.env.GOOGLE_CLIENT_ID)) {
+  logger.error('FATAL: GOOGLE_CLIENT_ID is not a valid Web OAuth client ID (expected format <digits>-<hash>.apps.googleusercontent.com). Google login will fail with invalid_client.');
+  process.exit(1);
+}
+if (!process.env.GOOGLE_CLIENT_SECRET || hasPlaceholder(process.env.GOOGLE_CLIENT_SECRET)) {
+  logger.warn('GOOGLE_CLIENT_SECRET is not set — Google login falls back to id-token verification only (still works for most setups).');
+}
 
+// Validate FRONTEND_URL so CORS works in production.
+if (!process.env.FRONTEND_URL) {
+  logger.warn('FRONTEND_URL is not set — CORS may block the deployed frontend. Set it to your frontend origin (e.g. https://prakurthi-bags-frontend.onrender.com).');
+}
+
+// ---------------------------------------------------------------------------
+// Optional service status (debug only)
+// ---------------------------------------------------------------------------
 const OPTIONAL_SERVICES = [
-  { key: 'GOOGLE_CLIENT_ID', label: 'Google OAuth', check: (e) => checkPlaceholder(e.GOOGLE_CLIENT_ID, 'Google OAuth') },
-  { key: 'SMTP_PASS', label: 'SMTP Email', check: (e) => (e.SMTP_PASS || e.EMAIL_PASS) && !hasPlaceholder(e.SMTP_PASS || e.EMAIL_PASS) },
-  { key: 'CLOUDINARY_CLOUD_NAME', label: 'Cloudinary', check: (e) => e.CLOUDINARY_CLOUD_NAME && e.CLOUDINARY_API_KEY && !hasPlaceholder(e.CLOUDINARY_CLOUD_NAME) },
-  { key: 'REDIS_URL', label: 'Redis Cache', check: (e) => e.REDIS_URL && !hasPlaceholder(e.REDIS_URL) },
-  { key: 'ADMIN_EMAIL', label: 'Admin Auth', check: (e) => e.ADMIN_EMAIL && !hasPlaceholder(e.ADMIN_EMAIL) },
+  { label: 'Google OAuth', ok: !!process.env.GOOGLE_CLIENT_ID && !hasPlaceholder(process.env.GOOGLE_CLIENT_ID) },
+  { label: 'SMTP Email', ok: !!(process.env.SMTP_PASS || process.env.EMAIL_PASS) && !hasPlaceholder(process.env.SMTP_PASS || process.env.EMAIL_PASS) },
+  { label: 'Cloudinary', ok: !!process.env.CLOUDINARY_CLOUD_NAME && !hasPlaceholder(process.env.CLOUDINARY_CLOUD_NAME) },
+  { label: 'Redis Cache', ok: !!process.env.REDIS_URL && !hasPlaceholder(process.env.REDIS_URL) },
+  { label: 'Admin Auth', ok: !!process.env.ADMIN_EMAIL && !hasPlaceholder(process.env.ADMIN_EMAIL) },
 ];
 
-for (const svc of OPTIONAL_SERVICES) {
-  if (svc.check(process.env)) {
-    console.log('✓', svc.label, 'Loaded');
-  } else {
-    console.log('  ⚠', svc.label, 'not configured — feature disabled');
-  }
+const enabledServices = OPTIONAL_SERVICES.filter((s) => s.ok).map((s) => s.label);
+const disabledServices = OPTIONAL_SERVICES.filter((s) => !s.ok).map((s) => s.label);
+if (disabledServices.length > 0) {
+  logger.warn(`Optional services not configured: ${disabledServices.join(', ')}`);
 }
 
-// Full env audit for debugging production issues
-console.log('');
-console.log('[ENV AUDIT]');
-const envVars = ['NODE_ENV', 'PORT', 'MONGO_URI', 'JWT_SECRET', 'JWT_EXPIRE',
-  'GOOGLE_CLIENT_ID', 'GOOGLE_CLIENT_SECRET', 'SMTP_USER', 'SMTP_PASS',
-  'EMAIL_USER', 'EMAIL_PASS', 'SMTP_HOST', 'SMTP_PORT',
-  'FRONTEND_URL', 'ADMIN_URL', 'REACT_APP_API_URL'];
-for (const v of envVars) {
-  const val = process.env[v];
-  if (val) {
-    // Mask sensitive values but show first 4 chars
-    const masked = (v.includes('SECRET') || v.includes('PASS') || v.includes('URI'))
-      ? val.substring(0, 4) + '***'
-      : val;
-    console.log(`  ✓ ${v} = ${masked}`);
-  } else {
-    console.log(`  ✗ ${v} = NOT SET`);
-  }
-}
-console.log('');
-
+// ---------------------------------------------------------------------------
+// Express app
+// ---------------------------------------------------------------------------
 const app = express();
 app.set('trust proxy', 1);
 const server = http.createServer(app);
@@ -158,7 +160,9 @@ app.use(
           'https://accounts.google.com',
           'https://oauth2.googleapis.com',
           'https://www.googleapis.com',
-          'https://prakurthi-bags.onrender.com',
+          'https://*.onrender.com',
+          ...(process.env.FRONTEND_URL ? [process.env.FRONTEND_URL.replace(/\/+$/, '')] : []),
+          ...(process.env.ADMIN_URL ? [process.env.ADMIN_URL.replace(/\/+$/, '')] : []),
         ],
         frameSrc: [
           "'self'",
@@ -175,6 +179,18 @@ app.use(
 );
 app.use(mongoSanitize());
 
+// Force COOP/COEP to unsafe-none on EVERY response. Render's edge proxy
+// injects `Cross-Origin-Opener-Policy: same-origin` by default, which BLOCKS
+// Google's `window.postMessage` credential hand-off ("Cross-Origin-Opener-Policy
+// policy would block the window.postMessage call") and silently breaks Google
+// Login / OTP popups. Setting it explicitly here overrides that default so the
+// Google Identity popup can deliver the id_token via postMessage.
+app.use((req, res, next) => {
+  res.setHeader('Cross-Origin-Opener-Policy', 'unsafe-none');
+  res.setHeader('Cross-Origin-Embedder-Policy', 'unsafe-none');
+  next();
+});
+
 const limiter = rateLimit({
     windowMs: 15 * 60 * 1000,
     max: 1000,
@@ -183,45 +199,47 @@ const limiter = rateLimit({
     message: 'Too many requests from this IP, please try again later.'
 });
 app.use('/api/', limiter);
+
+// ---------------------------------------------------------------------------
+// CORS
+// ---------------------------------------------------------------------------
 const allowedOrigins = [
   process.env.FRONTEND_URL,
-
-  // Local Development
+  process.env.ADMIN_URL,
   'http://localhost:3000',
   'http://localhost:5173',
   'http://localhost:4173',
   'http://localhost:5000',
-
-  // Local Network (LAN)
-  'http://192.168.29.55:3000',
-  'http://192.168.29.55:5173',
-
-  // Production - Render
   'https://prakurthi-bags.onrender.com',
   'https://prakruthi-bags.onrender.com',
   'https://prakurthi-bags-1-frontend.onrender.com',
   'https://prakruthi-bags-frontend.onrender.com',
-
-  // Production - Vercel / Netlify
-  'https://prakruthi-bags.vercel.app',
-  'https://prakruthi-bags.netlify.app',
-  /\.prakruthi-bags\.vercel\.app$/,
   /\.onrender\.com$/,
 ].filter(Boolean);
+
+// De-duplicate string entries, keep regex
+const uniqueStrings = [...new Set(allowedOrigins.filter((o) => typeof o === 'string'))];
+allowedOrigins.length = 0;
+uniqueStrings.forEach((o) => allowedOrigins.push(o));
+allowedOrigins.push(/\.onrender\.com$/);
+
+logger.debug(`CORS allowed: ${uniqueStrings.join(', ')}`);
 
 app.use(
   cors({
     origin: function (origin, callback) {
-      if (!origin || process.env.NODE_ENV === 'development') return callback(null, true);
+      if (!origin) return callback(null, true);
+      // Normalize: strip trailing slash so "http://localhost:5000/" matches
+      const normalized = origin.replace(/\/+$/, '');
       const allowed = allowedOrigins.some((o) => {
-        if (typeof o === 'string') return origin === o;
-        if (o instanceof RegExp) return o.test(origin);
+        if (typeof o === 'string') return normalized === o;
+        if (o instanceof RegExp) return o.test(normalized) || o.test(origin);
         return false;
       });
       if (allowed) {
         callback(null, true);
       } else {
-        console.warn('[CORS] Blocked origin:', origin);
+        logger.warn(`CORS blocked origin: ${origin}`);
         callback(new Error('Not allowed by CORS'));
       }
     },
@@ -251,8 +269,7 @@ app.get('/api/health', (req, res) => {
   });
 });
 
-// Email service health probe (does not require DB). Verifies SMTP
-// connectivity without sending a message.
+// Email service health probe (does not require DB).
 app.get('/api/email-health', async (req, res) => {
   try {
     const { verifyTransporter } = require('./utils/mailer');
@@ -277,7 +294,9 @@ app.get('/api/email-health', async (req, res) => {
 
 app.use('/api/', dbCheck);
 
-
+// ---------------------------------------------------------------------------
+// Routes
+// ---------------------------------------------------------------------------
 app.use('/api/auth', authRoutes);
 app.use('/api/admin', adminRoutes);
 app.use('/api/contact', contactRoutes);
@@ -302,17 +321,13 @@ app.use('/api/policies', policyRoutes);
 app.use('/api/contact-info', contactInfoRoutes);
 app.use('/api/addresses', addressRoutes);
 
-// Explicit 404 for any unmatched /api route so the frontend never receives
-// a stray HTML page (which would surface as "Cannot POST" / parse errors).
+// Explicit 404 for unmatched /api routes
 app.use('/api', (req, res) => {
   res.status(404).json({ message: `API route not found: ${req.method} ${req.originalUrl}` });
 });
 
+// Centralized error handler
 app.use((err, req, res, next) => {
-  // Centralized error handler: logs with context and returns a meaningful,
-  // JSON error (never an HTML stack trace) so the frontend can show a clear
-  // message instead of a generic 500. Uses consistent { success, message,
-  // errorCode } envelope matching all other auth endpoints.
   let statusCode = err.statusCode || 500;
   let message = err.message || 'Internal server error.';
   let code = err.code || 'SERVER_ERROR';
@@ -332,11 +347,11 @@ app.use((err, req, res, next) => {
     }
   }
 
-  const logLevel = statusCode >= 500 ? 'error' : 'warn';
-  console[logLevel](
-    `[${req.method} ${req.originalUrl}] -> ${statusCode} ${code}`.trim(),
-    statusCode >= 500 ? (err.stack || err.message) : ''
-  );
+  if (statusCode >= 500) {
+    logger.error(`${req.method} ${req.originalUrl} -> ${statusCode} ${code}`, err.stack || err.message);
+  } else {
+    logger.debug(`${req.method} ${req.originalUrl} -> ${statusCode} ${code}`);
+  }
 
   res.status(statusCode).json({
     success: false,
@@ -346,6 +361,9 @@ app.use((err, req, res, next) => {
   });
 });
 
+// ---------------------------------------------------------------------------
+// Static files + SPA fallback
+// ---------------------------------------------------------------------------
 const faviconPath = path.join(__dirname, '..', 'frontend', 'public', 'favicon.ico');
 if (fs.existsSync(faviconPath)) {
   app.get('/favicon.ico', (req, res) => res.sendFile(faviconPath));
@@ -372,12 +390,7 @@ app.get('/admin/*', (req, res) => {
   res.status(404).send('Admin dashboard not built.');
 });
 
-// Serve frontend build assets (JS/CSS/images) and public static files
-// (favicon, manifest, robots.txt, etc.) from the SAME origin.
 app.use(express.static(frontendBuild, {
-  // index.html must never be cached — stale index.html is the #1 cause
-  // of white/black screen on hard refresh.  All other build assets are
-  // fingerprinted by CRA and can be cached aggressively.
   index: false,
   setHeaders: (res, filePath) => {
     if (filePath.endsWith('index.html')) {
@@ -389,9 +402,7 @@ app.use(express.static(frontendBuild, {
 }));
 app.use(express.static(frontendPublic));
 
-// Catch-all SPA fallback: any non-API GET serves index.html so client-side
-// routes (/products, /cart, /profile, /admin...) survive a hard refresh.
-// This MUST be the LAST non-error route in the entire Express stack.
+// SPA catch-all (MUST be last non-error route)
 app.get('*', (req, res) => {
   if (req.path.startsWith('/api')) {
     return res.status(404).json({ message: 'API route not found' });
@@ -408,117 +419,95 @@ app.get('*', (req, res) => {
     res.set('Expires', '0');
     return res.sendFile(indexHtml);
   }
-  // Absolute worst case: never return a blank page. Return a minimal
-  // HTML page that redirects back to the root so the user always
-  // recovers instead of seeing a black/blank screen.
-  console.error('[SPA FATAL] index.html not found at:', indexHtml);
+  logger.error(`SPA fallback: index.html not found at ${indexHtml}`);
   res.status(200).send(
     '<!DOCTYPE html><html><head><meta charset="utf-8"><meta http-equiv="refresh" content="0;url=/"></head><body style="display:flex;justify-content:center;align-items:center;height:100vh;margin:0;font-family:system-ui"><p>Reloading... <a href="/">Click here</a></p></body></html>'
   );
 });
 
+// ---------------------------------------------------------------------------
+// Start server
+// ---------------------------------------------------------------------------
 const desiredPort = parseInt(process.env.PORT || '5000', 10);
 
 const startServer = (port) => {
   server.listen(port, () => {
-    console.log('✓ Server Running on port ' + port);
-    console.log('✓ Health: http://localhost:' + port + '/api/health');
+    const apiBase = process.env.FRONTEND_URL || `http://localhost:${port}`;
+    logger.info(`Server running on port ${port}`);
+    logger.info(`Health: ${apiBase}/api/health`);
   });
 
   server.on('error', (err) => {
     if (err.code === 'EADDRINUSE') {
-      console.error('Port ' + port + ' is already in use.');
+      logger.warn(`Port ${port} in use, trying ${port + 1}...`);
       const nextPort = port + 1;
       if (nextPort - desiredPort < 10) {
-        console.log('Trying port ' + nextPort + '...');
         startServer(nextPort);
       } else {
-        console.error('Could not find an available port. Please free a port and restart.');
+        logger.error('Could not find an available port. Please free a port and restart.');
         process.exit(1);
       }
     } else {
-      console.error('Server error:', err.message);
+      logger.error('Server error:', err.message);
       process.exit(1);
     }
   });
 
   process.on('SIGTERM', () => {
-     console.log('Shutting down gracefully...');
+    logger.info('Received SIGTERM. Shutting down gracefully...');
     server.close(() => process.exit(0));
   });
   process.on('SIGINT', () => {
-    console.log('Shutting down gracefully...');
+    logger.info('Received SIGINT. Shutting down gracefully...');
     server.close(() => process.exit(0));
   });
 };
 
 startServer(desiredPort);
 
-// Post-startup SMTP health check — logs immediately so email failures
-// are visible in Render's logs without waiting for a user request.
+// ---------------------------------------------------------------------------
+// Post-startup SMTP health check
+// ---------------------------------------------------------------------------
 setTimeout(async () => {
   const smtpUser = process.env.SMTP_USER || process.env.EMAIL_USER;
   const smtpPass = process.env.SMTP_PASS || process.env.EMAIL_PASS;
-  const smtpHost = process.env.SMTP_HOST || process.env.EMAIL_HOST || 'smtp.gmail.com';
-  const smtpPort = process.env.SMTP_PORT || process.env.EMAIL_PORT || '587';
   if (!smtpUser || !smtpPass) {
-     console.error('');
-     console.error('╔══════════════════════════════════════════════════════════╗');
-     console.error('║  ⚠  SMTP NOT CONFIGURED — Forgot Password emails      ║');
-     console.error('║  will NOT be delivered. Set these env vars:            ║');
-     console.error('║                                                        ║');
-     console.error('║  SMTP_USER (or EMAIL_USER) — your email address        ║');
-     console.error('║  SMTP_PASS (or EMAIL_PASS) — 16-char App Password      ║');
-     console.error('║                                                        ║');
-     console.error('║  For Gmail: https://myaccount.google.com/apppasswords  ║');
-     console.error('║  Required env vars: SMTP_HOST=smtp.gmail.com           ║');
-     console.error('║                   SMTP_PORT=587 or 465                 ║');
-     console.error('╚══════════════════════════════════════════════════════════╝');
-     console.error('');
+    logger.debug('SMTP not configured — forgot-password emails will not be sent');
     return;
   }
-  console.log(`[mailer] SMTP config: ${smtpHost}:${smtpPort} user=${smtpUser}`);
   try {
     const { verifyTransporter } = require('./utils/mailer');
     const result = await verifyTransporter();
     if (result.ok) {
-      console.log(`  ✓ SMTP Email: connected and verified (${smtpHost}:${smtpPort})`);
+      logger.debug('SMTP connected successfully');
     } else {
-      console.error(`  ✗ SMTP Email: NOT connected — ${result.reason || 'unknown error'} (${smtpHost}:${smtpPort})`);
-      console.error('    Forgot Password / OTP emails WILL FAIL. Fix your SMTP env vars on Render.');
-      if (result.reason === 'NETWORK_ERROR') {
-        console.error('    TIP: If port 587 is blocked, try SMTP_PORT=465 (SSL) instead.');
-      }
+      logger.warn(`SMTP not connected: ${result.reason || 'unknown'} — OTP emails will fail`);
     }
   } catch (e) {
-    console.error('  ✗ SMTP Email: startup check error —', e.message);
+    logger.error('SMTP startup check failed:', e.message);
   }
 }, 3000);
 
+// ---------------------------------------------------------------------------
+// Database init + seed data
+// ---------------------------------------------------------------------------
 connectDB().then(async () => {
   const Review = mongoose.model('Review');
   const User = mongoose.model('User');
   const Product = mongoose.model('Product');
 
-  // Clean up any seed/fake data from previous seed.js runs
+  // Clean up seed/fake data from previous seed.js runs
   const seedUserPattern = /seed\.customer\.\d+@prakruthi\.local/;
   const seedUsers = await User.find({ email: { $regex: seedUserPattern } }).lean();
-  const seedUserIds = seedUsers.map(u => u._id);
+  const seedUserIds = seedUsers.map((u) => u._id);
 
   if (seedUserIds.length > 0) {
     const deletedReviews = await Review.deleteMany({ user: { $in: seedUserIds } });
-    console.log('  ✓ Cleaned', deletedReviews.deletedCount, 'fake reviews from seed.js');
+    logger.debug(`Cleaned ${deletedReviews.deletedCount} fake reviews, removed ${seedUserIds.length} seed users`);
     await User.deleteMany({ _id: { $in: seedUserIds } });
-    console.log('  ✓ Removed', seedUserIds.length, 'fake seed users');
-  } else {
-    // Also clean reviews belonging to removed seed users (never delete legitimate customer reviews)
-    if (seedUserIds.length === 0) {
-      console.log('  ✓ No orphan reviews to clean (purchase-gated reviews always carry an order reference)');
-    }
   }
 
-  // Deduplicate reviews (keep only the latest per user+product) so the
-  // unique (user, product) index can be enforced and no duplicates appear.
+  // Deduplicate reviews (keep only the latest per user+product)
   const dupGroups = await Review.aggregate([
     { $group: { _id: { user: '$user', product: '$product' }, ids: { $push: '$_id' }, count: { $sum: 1 } } },
     { $match: { count: { $gt: 1 } } },
@@ -535,20 +524,7 @@ connectDB().then(async () => {
     await Review.recalculateProductRating(p._id).catch(() => {});
   }
 
-  Promise.all([
-    Product.countDocuments().catch(() => 0),
-    mongoose.model('Order').countDocuments().catch(() => 0),
-    mongoose.model('Coupon').countDocuments().catch(() => 0),
-    Review.countDocuments().catch(() => 0),
-  ]).then(([products, orders, coupons, reviews]) => {
-    console.log('  Collection counts:', JSON.stringify({
-      Products: products,
-      Orders: orders,
-      Coupons: coupons,
-      Reviews: reviews,
-    }));
-  }).catch(() => {});
-
+  // Seed default coupons if none exist
   const Coupon = mongoose.model('Coupon');
   const existing = await Coupon.countDocuments().catch(() => 0);
   if (existing === 0) {
@@ -562,10 +538,10 @@ connectDB().then(async () => {
       { code: 'UNLOCK250', title: 'Cart Milestone ₹250 OFF', description: 'You unlocked ₹250 OFF', discountType: 'fixed', discountValue: 250, minimumOrderAmount: 2000, maximumDiscount: 250, active: true, usageLimit: 0, usedCount: 0, featured: false, autoApply: false, isMilestone: true, unlockEmoji: '🎊', unlockTitle: 'Amazing!', unlockGradient: 'from-red-500 to-pink-500', startDate: new Date(), expiryDate: new Date(Date.now() + 365 * 86400000) },
       { code: 'UNLOCK500', title: 'Cart Milestone ₹500 OFF', description: 'You unlocked ₹500 OFF', discountType: 'fixed', discountValue: 500, minimumOrderAmount: 3000, maximumDiscount: 500, active: true, usageLimit: 0, usedCount: 0, featured: false, autoApply: false, isMilestone: true, unlockEmoji: '🔥', unlockTitle: 'Awesome!', unlockGradient: 'from-amber-500 via-orange-500 to-red-500', startDate: new Date(), expiryDate: new Date(Date.now() + 365 * 86400000) },
     ]);
-    console.log('✓ Auto-seeded default + milestone coupons');
+    logger.debug('Seeded default coupons');
   }
 
-  // Seed default CMS pages (settings + policy pages requested by the frontend).
+  // Seed default CMS pages
   const PageContent = mongoose.model('PageContent');
   const defaultPages = [
     {
@@ -597,7 +573,7 @@ connectDB().then(async () => {
       { upsert: true }
     ).catch(() => {});
   }
-  console.log('✓ Ensured default CMS pages exist');
+  logger.debug('Ensured default CMS pages exist');
 }).catch(() => {
-  console.log('  Server running in limited mode — database features unavailable');
+  logger.warn('Server running in limited mode — database features unavailable');
 });
