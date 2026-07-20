@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { Link, useNavigate, useLocation } from 'react-router-dom';
-import { initGoogleIdentity, promptGoogleCredential, getGoogleClientId, preloadGoogleScript, fetchGoogleClientId } from '../utils/googleAuth';
+import { initGoogleIdentity, renderGoogleButton, getGoogleClientId, preloadGoogleScript, fetchGoogleClientId, verifyGoogleClientIdMatch } from '../utils/googleAuth';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useDispatch } from 'react-redux';
 import { FaLeaf } from 'react-icons/fa';
@@ -26,6 +26,8 @@ const Login = () => {
   const [loading, setLoading] = useState(false);
   const [googleError, setGoogleError] = useState('');
   const googleSubmitting = useRef(false);
+  const googleBtnRef = useRef(null);
+  const [googleRendered, setGoogleRendered] = useState(false);
   const [googleLoading, setGoogleLoading] = useState(false);
   const [showPw, setShowPw] = useState(false);
   const dispatch = useDispatch();
@@ -34,13 +36,19 @@ const Login = () => {
   const [googleEnabled, setGoogleEnabled] = useState(true);
 
   const from = location.state?.from?.pathname || '/';
-  const isOriginLocal = window.location.origin.includes('localhost') ||
-    window.location.origin.includes('127.0.0.1') ||
-    window.location.origin.includes('192.168.');
 
   useEffect(() => {
     let active = true;
     const initGoogle = async () => {
+      // Verify the frontend's build-time client ID matches the backend's. A
+      // mismatch is the #1 cause of invalid_client / origin_mismatch in prod.
+      const matchResult = await verifyGoogleClientIdMatch().catch(() => null);
+      if (matchResult && matchResult.match === false && active) {
+        setGoogleError(matchResult.message);
+        setGoogleEnabled(false);
+        return;
+      }
+
       // Single API call: fetch both googleEnabled flag AND clientId in one request
       // (previously made 2 separate calls, each blocked on Render cold start)
       let clientId = getGoogleClientId();
@@ -59,10 +67,13 @@ const Login = () => {
       if (!clientId) {
         clientId = await fetchGoogleClientId();
       }
-      if (!clientId || !active) return;
+      if (!clientId || !active) {
+        setGoogleEnabled(false);
+        return;
+      }
       // Fire-and-forget: don't block Login render on Google SDK load
       preloadGoogleScript();
-      initGoogleIdentity({
+      const google = await initGoogleIdentity({
         clientId,
         onCredential: (credential) => {
           if (!active) return;
@@ -72,16 +83,37 @@ const Login = () => {
           if (!active) return;
           handleGoogleError(err);
         },
-      }).catch(() => {
-        if (active && !isOriginLocal) {
+      }).catch((e) => {
+        if (active) {
+          console.error('[Google] init failed:', e);
           setGoogleError(
-            'Google sign-in is blocked for this origin (Error 400: origin_mismatch).\n\n' +
-            'Fix: in Google Cloud Console -> APIs & Services -> Credentials -> your Web application OAuth Client ID, add this EXACT origin under "Authorized JavaScript origins":\n\n' +
+            'Google sign-in could not be initialized.\n\n' +
+            'This usually means the current origin is not listed in Google Cloud Console.\n\n' +
+            'To fix: Go to Google Cloud Console -> APIs & Services -> Credentials -> ' +
+            'your OAuth Client ID -> "Authorized JavaScript origins" and add:\n\n' +
             `${window.location.origin}\n\n` +
-            'Then hard-refresh this page.'
+            'Then hard-refresh this page (Ctrl+Shift+R).'
           );
         }
+        return null;
       });
+
+      // Render the official "Sign In With Google" button into our container.
+      // This is what actually opens the account chooser on click and returns the
+      // id_token via the callback above. If it fails, we fall back to a manual
+      // button click that calls prompt().
+      if (active && googleBtnRef.current && google) {
+        const ok = renderGoogleButton(googleBtnRef.current, {
+          type: 'standard',
+          theme: 'outline',
+          size: 'large',
+          text: 'continue_with',
+        });
+        if (ok) {
+          setGoogleRendered(true);
+          console.debug('[Google] official button rendered');
+        }
+      }
     };
     initGoogle();
     return () => { active = false; };
@@ -119,6 +151,9 @@ const Login = () => {
   const handleGoogleSuccess = async (credentialResponse) => {
     if (googleSubmitting.current) return;
     const idToken = credentialResponse?.credential;
+    if (process.env.NODE_ENV !== 'production') {
+      console.debug('[Google] success, credential present:', !!idToken);
+    }
     if (!idToken) {
       setError('Google sign-in did not return a credential. Please try again.');
       return;
@@ -128,7 +163,9 @@ const Login = () => {
     setError('');
     setGoogleError('');
     try {
+      console.debug('[Google] sending credential to backend /api/auth/google');
       const { data } = await api.post('/api/auth/google', { idToken });
+      console.debug('[Google] backend response received, token present:', !!data?.token);
       if (!data?.token) throw new Error('No token returned');
       localStorage.setItem('token', data.token);
       setUser(data);
@@ -136,13 +173,11 @@ const Login = () => {
       showNotification('login', 'Welcome to the Parkuthi Family');
       navigate(from, { replace: true });
     } catch (err) {
-      if (process.env.NODE_ENV !== 'production') {
-        console.error('[Google Login] authentication failed:', err?.response?.data || err?.message);
-      }
       const serverMsg = err?.response?.data?.message;
+      const serverHint = err?.response?.data?.hint;
       setError(
         serverMsg && typeof serverMsg === 'string'
-          ? serverMsg
+          ? serverMsg + (serverHint ? '\n' + serverHint : '')
           : 'Google sign-in failed. Please try again or use Email / Password.'
       );
     } finally {
@@ -152,22 +187,24 @@ const Login = () => {
   };
 
   const handleGoogleError = (err) => {
-    if (process.env.NODE_ENV !== 'production') {
-      console.warn(
-        '[Login] Google error:', err?.message || err,
-        '| Origin:', window.location.origin
-      );
+    // Release the submitting guard so the button works on the next click.
+    // Without this, an aborted FedCM popup leaves googleSubmitting stuck = dead button.
+    googleSubmitting.current = false;
+    setGoogleLoading(false);
+    // Prefer a server-provided message/hint when available.
+    const serverMsg = err?.response?.data?.message || err?.message;
+    const serverHint = err?.response?.data?.hint;
+    if (serverMsg && typeof serverMsg === 'string') {
+      setGoogleError(serverMsg + (serverHint ? '\n\n' + serverHint : ''));
+      return;
     }
-    if (!isOriginLocal) {
-      setGoogleError(
-        'Google sign-in is blocked for this origin (Error 400: origin_mismatch).\n\n' +
-        'Fix: in Google Cloud Console -> APIs & Services -> Credentials -> your Web application OAuth Client ID, add this EXACT origin under "Authorized JavaScript origins":\n\n' +
-        `${window.location.origin}\n\n` +
-        'Then hard-refresh this page.'
-      );
-    } else {
-      setGoogleError('Google sign-in failed. Please try again or use Email / Password.');
-    }
+    setGoogleError(
+      'Google sign-in failed. This usually means the current origin is not authorized.\n\n' +
+      'To fix: Go to Google Cloud Console -> APIs & Services -> Credentials -> ' +
+      'your OAuth Client ID -> "Authorized JavaScript origins" and add:\n\n' +
+      `${window.location.origin}\n\n` +
+      'Then hard-refresh this page (Ctrl+Shift+R).'
+    );
   };
 
   return (
@@ -364,41 +401,67 @@ const Login = () => {
                   <span style={{ flex: 1, height: 1, background: '#e5e7eb' }} />
                 </div>
                 <div style={{ position: 'relative', display: 'flex', width: '100%' }}>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      if (googleSubmitting.current) return;
-                      if (!window.google || !window.google.accounts) {
-                        setGoogleError('Google Sign-In is still loading. Please wait a moment and try again.');
-                        return;
-                      }
-                      googleSubmitting.current = true;
-                      setGoogleLoading(true);
-                      setGoogleError('');
-                      try {
-                        promptGoogleCredential();
-                        // Safety: if no credential arrives shortly, release the guard.
-                        setTimeout(() => {
+                  {/* Official "Sign In With Google" button is injected here by
+                      renderGoogleButton(). It opens the account chooser and
+                      delivers the id_token via the init callback. */}
+                  <div
+                    ref={googleBtnRef}
+                    style={{ width: '100%', display: googleRendered ? 'block' : 'none' }}
+                  />
+
+                  {/* Fallback manual button (only shown until the official Google
+                      button is rendered, or if GIS failed to load). */}
+                  {!googleRendered && (
+                    <button
+                      type="button"
+                      onClick={async () => {
+                        if (googleSubmitting.current) return;
+                        if (!window.google || !window.google.accounts) {
+                          setGoogleError('Google Sign-In is still loading. Please wait a moment and try again.');
+                          return;
+                        }
+                        googleSubmitting.current = true;
+                        setGoogleLoading(true);
+                        setGoogleError('');
+                        try {
+                          window.google.accounts.id.prompt((notification) => {
+                            if (!notification) return;
+                            const suppressed =
+                              (notification.isNotDisplayed && notification.isNotDisplayed()) ||
+                              (notification.isSkipped && notification.isSkipped()) ||
+                              notification.getNotDisplayedReason?.() === 'suppressed_by_fedcm';
+                            if (suppressed) {
+                              // One Tap suppressed — let the user click the
+                              // official button which is rendered in the ref.
+                              googleSubmitting.current = false;
+                              setGoogleLoading(false);
+                            }
+                          });
+                        } catch (e) {
                           googleSubmitting.current = false;
                           setGoogleLoading(false);
-                        }, 60000);
-                      } catch {
-                        googleSubmitting.current = false;
-                        setGoogleLoading(false);
-                        setGoogleError('Google Sign-In failed to start. Please try again or use Email / Password.');
-                      }
-                    }}
-                    className="auth-google-btn"
-                    aria-label="Continue with Google"
-                  >
-                    <svg width="18" height="18" viewBox="0 0 48 48" aria-hidden="true" style={{ flexShrink: 0 }}>
-                      <path fill="#EA4335" d="M24 9.5c3.54 0 6.71 1.22 9.21 3.6l6.85-6.85C35.9 2.38 30.47 0 24 0 14.62 0 6.51 5.38 2.56 13.22l7.98 6.19C12.43 13.72 17.74 9.5 24 9.5z" />
-                      <path fill="#4285F4" d="M46.98 24.55c0-1.57-.15-3.09-.38-4.55H24v9.02h12.94c-.58 2.96-2.26 5.48-4.78 7.18l7.73 6.01C46.44 38.04 48 31.51 48 24.55z" />
-                      <path fill="#FBBC05" d="M10.53 28.59c-.48-1.45-.76-2.99-.76-4.59s.27-3.14.76-4.59l-7.98-6.19C.92 16.46 0 20.12 0 24c0 3.88.92 7.54 2.56 10.78l7.97-6.19z" />
-                      <path fill="#34A853" d="M24 48c6.48 0 11.93-2.13 15.89-5.81l-7.73-6.01c-2.15 1.45-4.92 2.3-8.16 2.3-6.26 0-11.57-4.22-13.47-9.91l-7.98 6.19C6.51 42.62 14.62 48 24 48z" />
-                    </svg>
-                    <span>Continue with Google</span>
-                  </button>
+                        } finally {
+                          // Safety net: never leave the button permanently stuck.
+                          setTimeout(() => {
+                            if (googleSubmitting.current) {
+                              googleSubmitting.current = false;
+                              setGoogleLoading(false);
+                            }
+                          }, 120000);
+                        }
+                      }}
+                      className="auth-google-btn"
+                      aria-label="Continue with Google"
+                    >
+                      <svg width="18" height="18" viewBox="0 0 48 48" aria-hidden="true" style={{ flexShrink: 0 }}>
+                        <path fill="#EA4335" d="M24 9.5c3.54 0 6.71 1.22 9.21 3.6l6.85-6.85C35.9 2.38 30.47 0 24 0 14.62 0 6.51 5.38 2.56 13.22l7.98 6.19C12.43 13.72 17.74 9.5 24 9.5z" />
+                        <path fill="#4285F4" d="M46.98 24.55c0-1.57-.15-3.09-.38-4.55H24v9.02h12.94c-.58 2.96-2.26 5.48-4.78 7.18l7.73 6.01C46.44 38.04 48 31.51 48 24.55z" />
+                        <path fill="#FBBC05" d="M10.53 28.59c-.48-1.45-.76-2.99-.76-4.59s.27-3.14.76-4.59l-7.98-6.19C.92 16.46 0 20.12 0 24c0 3.88.92 7.54 2.56 10.78l7.97-6.19z" />
+                        <path fill="#34A853" d="M24 48c6.48 0 11.93-2.13 15.89-5.81l-7.73-6.01c-2.15 1.45-4.92 2.3-8.16 2.3-6.26 0-11.57-4.22-13.47-9.91l-7.98 6.19C6.51 42.62 14.62 48 24 48z" />
+                      </svg>
+                      <span>Continue with Google</span>
+                    </button>
+                  )}
                   {googleLoading && (
                     <div style={{
                       position: 'absolute',
