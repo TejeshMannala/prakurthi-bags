@@ -1,6 +1,7 @@
 const express = require('express');
 const rateLimit = require('express-rate-limit');
 const router = express.Router();
+const authRequestLogger = require('../middleware/authRequestLogger');
 const { protect } = require('../middleware/authMiddleware');
 const {
   register,
@@ -73,14 +74,14 @@ const registerLimiter = rateLimit({
     'unknown',
 });
 
-router.post('/register', registerLimiter, register);
-router.post('/login', loginLimiter, login);
-router.post('/google', authLimiter, googleLogin);
-router.get('/google-config', getGoogleConfig);
-router.post('/forgot-password', forgotPasswordLimiter, forgotPasswordHandler);
-router.post('/send-otp', forgotPasswordLimiter, sendOtp);
-router.post('/verify-otp', authLimiter, verifyOtp);
-router.post('/reset-password', authLimiter, resetPassword);
+router.post('/register', authRequestLogger, registerLimiter, register);
+router.post('/login', authRequestLogger, loginLimiter, login);
+router.post('/google', authRequestLogger, authLimiter, googleLogin);
+router.get('/google-config', authRequestLogger, getGoogleConfig);
+router.post('/forgot-password', authRequestLogger, forgotPasswordLimiter, forgotPasswordHandler);
+router.post('/send-otp', authRequestLogger, forgotPasswordLimiter, sendOtp);
+router.post('/verify-otp', authRequestLogger, authLimiter, verifyOtp);
+router.post('/reset-password', authRequestLogger, authLimiter, resetPassword);
 router.get('/profile', protect, getProfile);
 router.put('/profile', protect, updateProfile);
 router.post('/refresh', protect, refreshToken);

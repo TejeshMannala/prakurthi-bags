@@ -16,8 +16,8 @@ const ForgotPassword = () => {
   // Debounce guard to prevent rapid double-clicks
   const submittingRef = useRef(false);
 
-  // OTP timer — 10 minutes (600s) to match the backend OTP_TTL_MS
-  const [timer, setTimer] = useState(600);
+  // OTP timer — 5 minutes (300s) to match the backend OTP_TTL_MS
+  const [timer, setTimer] = useState(300);
   const [canResend, setCanResend] = useState(false);
   const intervalRef = useRef(null);
 
@@ -25,7 +25,7 @@ const ForgotPassword = () => {
   const otpRefs = useRef([]);
 
   const startTimer = useCallback(() => {
-    setTimer(600);
+    setTimer(300);
     setCanResend(false);
     clearInterval(intervalRef.current);
     intervalRef.current = setInterval(() => {
@@ -54,7 +54,7 @@ const ForgotPassword = () => {
     setLoading(true);
     try {
       const { data } = await api.post('/api/auth/forgot-password', { email });
-      setMessage(data.message || 'OTP has been sent to your email. It expires in 10 minutes.');
+      setMessage(data.message || 'OTP has been sent to your email. It expires in 5 minutes.');
       setStep(2);
       startTimer();
       // Focus first OTP box
@@ -92,7 +92,7 @@ const ForgotPassword = () => {
     otpRefs.current[0]?.focus();
     try {
       const { data } = await api.post('/api/auth/forgot-password', { email });
-      setMessage(data.message || 'OTP has been resent. It expires in 10 minutes.');
+      setMessage(data.message || 'OTP has been resent. It expires in 5 minutes.');
       startTimer();
     } catch (err) {
       const msg = err.response?.data?.message;
@@ -226,7 +226,6 @@ const ForgotPassword = () => {
     try {
       const { data } = await api.post('/api/auth/reset-password', {
         email,
-        otp,
         newPassword,
       });
       setMessage(data.message);

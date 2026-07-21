@@ -103,8 +103,16 @@ const OPTIONAL_SERVICES = [
 
 const enabledServices = OPTIONAL_SERVICES.filter((s) => s.ok).map((s) => s.label);
 const disabledServices = OPTIONAL_SERVICES.filter((s) => !s.ok).map((s) => s.label);
+if (enabledServices.length > 0) {
+  logger.info(`Services enabled: ${enabledServices.join(', ')}`);
+}
 if (disabledServices.length > 0) {
-  logger.warn(`Optional services not configured: ${disabledServices.join(', ')}`);
+  logger.warn(`Services not configured: ${disabledServices.join(', ')}`);
+}
+if (process.env.SMTP_HOST || process.env.SMTP_USER) {
+  const smtpPort = process.env.SMTP_PORT || '587';
+  const smtpSecure = process.env.SMTP_SECURE || 'false';
+  logger.info(`SMTP config: ${process.env.SMTP_HOST || 'smtp.gmail.com'}:${smtpPort} secure=${smtpSecure}`);
 }
 
 // ---------------------------------------------------------------------------
@@ -343,6 +351,24 @@ const frontendBuild = path.join(__dirname, '..', 'frontend', 'build');
 const adminDist = path.join(__dirname, '..', 'admin-dashboard', 'dist');
 const frontendPublic = path.join(__dirname, '..', 'frontend', 'public');
 
+// --- Startup verification: confirm build directories exist ---
+const frontendIndexExists = fs.existsSync(path.join(frontendBuild, 'index.html'));
+if (!frontendIndexExists) {
+  logger.error(`SPA WARNING: index.html not found at ${frontendIndexExists ? '(exists)' : frontendBuild}`);
+  logger.error('  The frontend build directory is missing or empty.');
+  logger.error('  Run: cd frontend && npm install && npm run build');
+  logger.error('  SPA routes will show a fallback page until the build is present.');
+} else {
+  logger.info(`Frontend build verified: ${frontendBuild}`);
+}
+
+const adminIndexExists = fs.existsSync(path.join(adminDist, 'index.html'));
+if (!adminIndexExists) {
+  logger.warn(`Admin dashboard not built at ${adminDist} — /admin will show 404`);
+} else {
+  logger.info(`Admin dashboard verified: ${adminDist}`);
+}
+
 app.use('/admin', express.static(adminDist));
 app.get('/admin', (req, res) => {
   const adminIndex = path.join(adminDist, 'index.html');
@@ -385,8 +411,9 @@ app.get('*', (req, res) => {
     return res.sendFile(indexHtml);
   }
   logger.error(`SPA fallback: index.html not found at ${indexHtml}`);
+  logger.error('  Build the frontend: cd frontend && npm install && npm run build');
   res.status(200).send(
-    '<!DOCTYPE html><html><head><meta charset="utf-8"><meta http-equiv="refresh" content="0;url=/"></head><body style="display:flex;justify-content:center;align-items:center;height:100vh;margin:0;font-family:system-ui"><p>Reloading... <a href="/">Click here</a></p></body></html>'
+    '<!DOCTYPE html><html><head><meta charset="utf-8"><meta http-equiv="refresh" content="5;url=/"></head><body style="display:flex;justify-content:center;align-items:center;height:100vh;margin:0;font-family:system-ui;background:#f0f7f1"><div style="text-align:center;padding:40px"><h2 style="color:#2E5A44">Prakruthi Bags</h2><p style="color:#666">The application is being deployed. This page will refresh automatically.</p><p style="color:#999;font-size:13px;margin-top:20px"><a href="/" style="color:#2E5A44">Click here if it doesn\'t reload</a></p></div></body></html>'
   );
 });
 
@@ -474,16 +501,26 @@ setTimeout(async () => {
   const smtpUser = process.env.SMTP_USER || process.env.EMAIL_USER;
   const smtpPass = process.env.SMTP_PASS || process.env.EMAIL_PASS;
   if (!smtpUser || !smtpPass) {
-    logger.debug('SMTP not configured — forgot-password emails will not be sent');
+    logger.warn('SMTP not configured — forgot-password/OTP emails will not be sent. Set SMTP_USER and SMTP_PASS.');
     return;
   }
+  const smtpHost = process.env.SMTP_HOST || 'smtp.gmail.com';
+  const smtpPort = process.env.SMTP_PORT || '587';
+  logger.info(`SMTP health check: ${smtpHost}:${smtpPort} (user: ${smtpUser})`);
   try {
     const { verifyTransporter } = require('./utils/mailer');
     const result = await verifyTransporter();
     if (result.ok) {
-      logger.debug('SMTP connected successfully');
+      logger.info('SMTP connected and verified successfully');
     } else {
-      logger.warn(`SMTP not connected: ${result.reason || 'unknown'} — OTP emails will fail`);
+      logger.warn(`SMTP not connected: ${result.reason || 'unknown'} — OTP/forgot-password emails will fail`);
+      if (result.reason === 'NETWORK_ERROR') {
+        logger.warn(`  Cannot reach ${smtpHost}:${smtpPort}. Check SMTP_HOST, SMTP_PORT, and network access.`);
+      } else if (result.reason === 'AUTH_ERROR') {
+        logger.warn('  Authentication failed. Verify SMTP_USER and SMTP_PASS (use Gmail App Password).');
+      } else if (result.reason === 'MISSING_ENV') {
+        logger.warn('  SMTP_USER or SMTP_PASS is missing. Set them in Render dashboard.');
+      }
     }
   } catch (e) {
     logger.error('SMTP startup check failed:', e.message);

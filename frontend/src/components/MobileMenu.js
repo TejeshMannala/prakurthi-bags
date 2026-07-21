@@ -59,7 +59,7 @@ const MobileMenu = ({ isOpen, onClose }) => {
           >
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '0 20px 20px', borderBottom: '1px solid #e5e7eb' }}>
               <Link to="/" onClick={onClose} style={{ fontFamily: "'Playfair Display', serif", fontSize: 22, fontWeight: 700, color: '#2E5A44', textDecoration: 'none' }}>
-                Parkuthi<span style={{ color: '#A3C9A8' }}> Bags</span>
+                Prakruthi<span style={{ color: '#A3C9A8' }}> Bags</span>
               </Link>
               <button onClick={onClose} style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 22, color: '#6b7280', padding: 4 }}>
                 <FiX />

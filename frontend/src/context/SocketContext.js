@@ -26,7 +26,6 @@ export const SocketProvider = ({ children }) => {
     } else {
       serverUrl = 'http://localhost:5000';
     }
-
     const socket = io(serverUrl, {
       auth: { token },
       transports: ['websocket', 'polling'],

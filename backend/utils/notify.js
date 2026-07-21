@@ -1,9 +1,8 @@
 const Notification = require('../models/Notification');
 const { getIO } = require('../socket/socketHandler');
+const logger = require('./logger');
 
 // Create a Notification document AND push it over the socket in real time.
-// `user`   -> target user id (string/ObjectId) for a user-facing notification
-// `forAdmin` -> send to the admin room instead (or in addition)
 async function pushNotification({
   type = 'info',
   title,
@@ -35,7 +34,7 @@ async function pushNotification({
     }
     return notif;
   } catch (err) {
-    console.error('[notify] failed to create/emit notification:', err.message);
+    logger.error('Failed to create/emit notification:', err.message);
     return null;
   }
 }

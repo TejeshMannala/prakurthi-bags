@@ -2,6 +2,7 @@ const { Server } = require('socket.io');
 const jwt = require('jsonwebtoken');
 const User = require('../models/User');
 const Product = require('../models/Product');
+const logger = require('../utils/logger');
 
 let io;
 
@@ -13,11 +14,41 @@ function setupSocket(server) {
   const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:3000';
   const adminUrl = process.env.ADMIN_URL || 'http://localhost:5173';
 
+  // Build a comprehensive list of allowed origins for Socket.IO.
+  // Must match the CORS allowedOrigins in server.js.
+  const socketOrigins = [
+    frontendUrl,
+    adminUrl,
+    'http://localhost:3000',
+    'http://localhost:5173',
+    'http://localhost:4173',
+    'http://localhost:5000',
+    'https://prakurthi-bags.onrender.com',
+    'https://prakruthi-bags.onrender.com',
+    'https://prakurthi-bags-1-frontend.onrender.com',
+    'https://prakruthi-bags-frontend.onrender.com',
+    // Catch-all for any Render subdomain + trailing-slash normalization
+    (origin, cb) => {
+      if (!origin) return cb(null, true);
+      try {
+        const normalized = origin.replace(/\/+$/, '');
+        const host = new URL(normalized).hostname;
+        if (host.endsWith('.onrender.com')) return cb(null, true);
+      } catch {}
+      cb(null, false);
+    },
+  ].filter(Boolean);
+
+  logger.debug(`Socket.IO CORS: ${socketOrigins.length} origins configured`);
+
   io = new Server(server, {
     cors: {
-      origin: [frontendUrl, adminUrl, 'http://localhost:3000', 'http://localhost:5173', 'http://localhost:4173'].filter(Boolean),
+      origin: socketOrigins,
       credentials: true,
     },
+    transports: ['websocket', 'polling'],
+    pingTimeout: 60000,
+    pingInterval: 25000,
   });
 
   // ---- Auth middleware: every socket must present a valid JWT ----
@@ -89,7 +120,6 @@ function setupSocket(server) {
 
     markOnline(socket, user);
 
-    // Explicit join to a user room (used by admin support streams).
     socket.on('join', (data) => {
       const targetUserId = data?.userId || data;
       if (targetUserId && (targetUserId === userId || user.role === 'admin')) {
@@ -135,7 +165,6 @@ function setupSocket(server) {
       const productId = data?.productId || data;
       if (!productId) return;
       const room = `product_view_${productId}`;
-      // Leave any previously tracked product for this socket.
       if (socket._viewingProduct && socket._viewingProduct !== productId) {
         const prev = socket._viewingProduct;
         socket.leave(`product_view_${prev}`);
@@ -204,7 +233,6 @@ function emitSupportUpdate(ticketId, messageData) {
   }
 }
 
-// Broadcast a content change to every connected storefront session.
 function emitContent(event, data) {
   if (!io) return;
   io.emit(event, data || {});

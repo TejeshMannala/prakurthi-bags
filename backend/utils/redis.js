@@ -1,4 +1,5 @@
 const { Redis } = require('@upstash/redis');
+const logger = require('./logger');
 
 const REDIS_URL = process.env.REDIS_URL;
 const REDIS_TOKEN = process.env.REDIS_TOKEN;
@@ -14,15 +15,15 @@ const hasPlaceholderCreds = (url) => {
 
 if (REDIS_URL && REDIS_TOKEN) {
   if (hasPlaceholderCreds(REDIS_URL) || hasPlaceholderCreds(REDIS_TOKEN)) {
-    console.warn('⚠ Redis URL or Token contains placeholder credentials — caching disabled. Set valid REDIS_URL and REDIS_TOKEN in .env to enable.');
+    logger.warn('Redis URL or Token contains placeholder credentials — caching disabled');
   } else {
     try {
       redis = new Redis({ url: REDIS_URL, token: REDIS_TOKEN });
       enabled = true;
-      console.log('✓ Redis Connected — caching enabled');
+      logger.debug('Redis connected — caching enabled');
     } catch (err) {
       if (!warned) {
-        console.warn('⚠ Redis unavailable: ' + (err.message || err) + ' — using MongoDB fallback.');
+        logger.warn('Redis unavailable: ' + (err.message || err) + ' — using MongoDB fallback');
         warned = true;
       }
       redis = null;
@@ -30,7 +31,7 @@ if (REDIS_URL && REDIS_TOKEN) {
     }
   }
 } else if (!warned) {
-  console.log('⚠ Redis Disabled — set REDIS_URL and REDIS_TOKEN in .env to enable caching');
+  logger.debug('Redis disabled — set REDIS_URL and REDIS_TOKEN to enable caching');
   warned = true;
 }
 
@@ -76,14 +77,10 @@ const cache = {
     await this.del('coupons:*');
   },
 
-  // Category list is derived (aggregated from products) and also cached under
-  // the `categories*` keys consumed by the storefront, so flush those too.
   async invalidateCategories() {
     await this.del('categories*');
   },
 
-  // CMS pages, banners, settings, testimonials, team, faqs, contact —
-  // everything the storefront chrome reads and that an admin can edit.
   async invalidateContentCache() {
     await this.del('page:*');
     await this.del('banners*');
@@ -95,7 +92,7 @@ const cache = {
   },
 
   generateKey(prefix, params) {
-    const sorted = Object.keys(params).sort().map(k => `${k}=${params[k] ?? ''}`).join('&');
+    const sorted = Object.keys(params).sort().map((k) => `${k}=${params[k] ?? ''}`).join('&');
     return `${prefix}:${sorted}`;
   },
 

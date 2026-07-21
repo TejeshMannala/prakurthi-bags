@@ -2,13 +2,12 @@ import React, { useState, useEffect, useRef } from 'react';
 import { Link, useNavigate, useLocation } from 'react-router-dom';
 import { initGoogleIdentity, renderGoogleButton, getGoogleClientId, preloadGoogleScript, fetchGoogleClientId, verifyGoogleClientIdMatch } from '../utils/googleAuth';
 import { motion, AnimatePresence } from 'framer-motion';
-import { useDispatch } from 'react-redux';
 import { FaLeaf } from 'react-icons/fa';
 import { FiMail, FiLock, FiUser, FiEye, FiEyeOff, FiAlertCircle, FiArrowRight } from 'react-icons/fi';
 import api from '../utils/axios';
 import { useCart } from '../context/CartContext';
 import { useNotification } from '../context/NotificationContext';
-import { fetchProfile } from '../features/auth/authSlice';
+
 
 const itemVariants = {
   hidden: { opacity: 0, y: 16 },
@@ -30,7 +29,6 @@ const Login = () => {
   const [googleRendered, setGoogleRendered] = useState(false);
   const [googleLoading, setGoogleLoading] = useState(false);
   const [showPw, setShowPw] = useState(false);
-  const dispatch = useDispatch();
   const { setUser } = useCart();
   const { showNotification } = useNotification();
   const [googleEnabled, setGoogleEnabled] = useState(true);
@@ -138,8 +136,7 @@ const Login = () => {
       const { data } = await api.post(endpoint, form);
       localStorage.setItem('token', data.token);
       setUser(data);
-      dispatch(fetchProfile());
-      showNotification('login', `Welcome${isRegister ? '' : ' back'} to the Parkuthi Family`);
+      showNotification('login', `Welcome${isRegister ? '' : ' back'} to the Prakruthi Family`);
       navigate(from, { replace: true });
     } catch (err) {
       setError(err.response?.data?.message || 'Authentication failed.');
@@ -169,8 +166,7 @@ const Login = () => {
       if (!data?.token) throw new Error('No token returned');
       localStorage.setItem('token', data.token);
       setUser(data);
-      dispatch(fetchProfile());
-      showNotification('login', 'Welcome to the Parkuthi Family');
+      showNotification('login', 'Welcome to the Prakruthi Family');
       navigate(from, { replace: true });
     } catch (err) {
       const serverMsg = err?.response?.data?.message;
@@ -234,14 +230,14 @@ const Login = () => {
                   fontWeight: 700,
                   letterSpacing: -0.3,
                 }}>
-                  Parkuthi
+                  Prakruthi
                 </span>
               </div>
               <h2>{isRegister ? 'Create Account' : 'Welcome back'}</h2>
               <p className="auth-subtitle">
                 {isRegister
                   ? "Join the eco-movement. It's free!"
-                  : 'Sign in to your Parkuthi account'}
+                  : 'Sign in to your Prakruthi account'}
               </p>
             </motion.div>
 

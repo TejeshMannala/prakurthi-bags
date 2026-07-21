@@ -26,10 +26,9 @@ const getCredentials = () => {
   const user = process.env.SMTP_USER || process.env.EMAIL_USER;
   const pass = process.env.SMTP_PASS || process.env.EMAIL_PASS;
   const host = process.env.SMTP_HOST || process.env.EMAIL_HOST || 'smtp.gmail.com';
-  // Prefer an explicit SMTP_PORT; default to 465 (implicit SSL). Gmail SMTP
-  // from Render is reliably reachable on 465 (secure SSL) but frequently times
-  // out on 587 (STARTTLS), so 465 must be the default/first choice.
-  const port = Number(process.env.SMTP_PORT || process.env.EMAIL_PORT || 465);
+  // Default to port 587 (STARTTLS) — universally supported by Gmail and most
+  // providers. Port 465 (implicit SSL) is used as a fallback if 587 fails.
+  const port = Number(process.env.SMTP_PORT || process.env.EMAIL_PORT || 587);
   // Honor an explicit SMTP_SECURE flag; otherwise derive from the port
   // (465 => implicit SSL, anything else => STARTTLS).
   const secureEnv = process.env.SMTP_SECURE;
@@ -129,7 +128,7 @@ const logReason = (reason) => {
       logger.error('SMTP auth failed — verify SMTP_USER/SMTP_PASS (use Gmail App Password)');
       break;
     case 'NETWORK_ERROR':
-      logger.error(`SMTP network error — cannot reach ${host}:${port}. Try port 465 (SSL) if 587 is blocked`);
+      logger.error(`SMTP network error — cannot reach ${host}:${port}. Will try alternate port as fallback`);
       break;
     case 'TIMEOUT':
       logger.error(`SMTP timeout — ${host}:${port} responded too slowly`);
@@ -146,11 +145,29 @@ const sendEmail = async ({ to, subject, html, text }) => {
   let verification = await verifyTransporter();
   if (!verification.ok) {
     logReason(verification.reason);
-    // We deliberately do NOT fall back to port 587: from Render's network
-    // Gmail's 587 (STARTTLS) times out, while 465 (implicit SSL) is the
-    // reliable path. Flipping to 587 only wastes ~8s and still fails. If the
-    // configured port is wrong the error is logged and surfaced to the caller.
-    return { ok: false, reason: verification.reason };
+    // Attempt port fallback: if the primary port failed with a network error,
+    // try the alternate port (587 <-> 465) before giving up.
+    const creds = getCredentials();
+    const fallbackPort = creds.port === 587 ? 465 : 587;
+    const fallbackSecure = fallbackPort === 465;
+    logger.info(`[SMTP] primary port ${creds.port} failed (${verification.reason}), trying fallback port ${fallbackPort}`);
+    destroyTransporter();
+    const fallbackTransporter = createTransporter(fallbackPort, fallbackSecure);
+    if (fallbackTransporter) {
+      try {
+        await fallbackTransporter.verify();
+        logger.info(`[SMTP] fallback port ${fallbackPort} connected successfully`);
+        verification = { ok: true, reason: null };
+        cachedTransporter = fallbackTransporter;
+      } catch (fallbackErr) {
+        const fallbackReason = classify(fallbackErr);
+        logger.error(`[SMTP] fallback port ${fallbackPort} also failed (${fallbackReason}): ${fallbackErr.message}`);
+        destroyTransporter();
+        return { ok: false, reason: verification.reason };
+      }
+    } else {
+      return { ok: false, reason: verification.reason };
+    }
   }
 
   const transporter = cachedTransporter;

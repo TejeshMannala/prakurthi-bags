@@ -5,6 +5,7 @@ const User = require('../models/User');
 const Product = require('../models/Product');
 const { cache } = require('../utils/redis');
 const { getIO, emitToAdmin } = require('../socket/socketHandler');
+const logger = require('../utils/logger');
 
 // Recompute and persist the product's aggregate rating fields from all
 // approved, visible reviews. Keeps averageRating / rating / totalReviews /
@@ -261,7 +262,7 @@ const createReview = async (req, res) => {
 
     res.status(201).json(populated);
   } catch (error) {
-    console.error('[Review] createReview failed:', error?.stack || error?.message || error);
+    logger.error('[Review] createReview failed:', error?.stack || error?.message || error);
     if (error.code === 11000) {
       return res.status(400).json({ message: 'You have already reviewed this product.' });
     }

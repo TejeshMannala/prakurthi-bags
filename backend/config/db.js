@@ -1,4 +1,5 @@
 const mongoose = require('mongoose');
+const logger = require('../utils/logger');
 
 let dbConnected = false;
 
@@ -9,43 +10,42 @@ const connectDB = async (attempt = 1) => {
   try {
     const uri = process.env.MONGO_URI;
     if (!uri) {
-      console.error('✗ MONGO_URI not set — running without database');
+      logger.error('MONGO_URI not set — running without database');
       return null;
     }
-    console.log(`[DB] Connecting to MongoDB (attempt ${attempt}/${MONGO_RETRY_ATTEMPTS})...`);
+    logger.debug(`MongoDB connecting (attempt ${attempt}/${MONGO_RETRY_ATTEMPTS})`);
     const conn = await mongoose.connect(uri, {
       serverSelectionTimeoutMS: 10000,
       socketTimeoutMS: 45000,
       connectTimeoutMS: 15000,
     });
     dbConnected = true;
-    console.log('✓ MongoDB Connected');
-    console.log('  Database:', conn.connection.db.databaseName);
+    logger.info(`MongoDB connected to ${conn.connection.db.databaseName}`);
 
     conn.connection.on('error', (err) => {
-      console.error('[DB] MongoDB runtime error:', err.message);
+      logger.error('MongoDB runtime error:', err.message);
       dbConnected = false;
     });
 
     conn.connection.on('disconnected', () => {
-      console.warn('[DB] MongoDB disconnected. Attempting to reconnect...');
+      logger.warn('MongoDB disconnected. Attempting to reconnect...');
       dbConnected = false;
     });
 
     conn.connection.on('reconnected', () => {
-      console.log('[DB] MongoDB reconnected');
+      logger.info('MongoDB reconnected');
       dbConnected = true;
     });
 
     return conn;
   } catch (error) {
-    console.error(`[DB] MongoDB connection failed (attempt ${attempt}/${MONGO_RETRY_ATTEMPTS}):`, error.message);
+    logger.error(`MongoDB connection failed (attempt ${attempt}/${MONGO_RETRY_ATTEMPTS}):`, error.message);
     if (attempt < MONGO_RETRY_ATTEMPTS) {
-      console.log(`[DB] Retrying in ${MONGO_RETRY_DELAY_MS / 1000}s...`);
+      logger.debug(`Retrying in ${MONGO_RETRY_DELAY_MS / 1000}s...`);
       await new Promise((r) => setTimeout(r, MONGO_RETRY_DELAY_MS));
       return connectDB(attempt + 1);
     }
-    console.error('  The server will start but database features will be unavailable.');
+    logger.error('Database features will be unavailable');
     dbConnected = false;
     return null;
   }

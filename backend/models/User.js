@@ -28,6 +28,14 @@ const userSchema = new mongoose.Schema(
       enum: ['user', 'admin'],
       default: 'user',
     },
+    isActive: {
+      type: Boolean,
+      default: true,
+    },
+    emailVerified: {
+      type: Boolean,
+      default: false,
+    },
     googleId: {
       type: String,
       index: true,
@@ -102,13 +110,21 @@ const userSchema = new mongoose.Schema(
     otpAttemptsLockedAt: {
       type: Date,
     },
+    otpVerified: {
+      type: Boolean,
+      default: false,
+    },
+    otpVerifiedAt: {
+      type: Date,
+    },
   },
   { timestamps: true }
 );
 
-userSchema.index({ email: 1 });
+// NOTE: email already has `unique: true` above, so Mongoose builds the
+// {"email":1} index automatically. Do NOT re-declare `index({ email: 1 })`
+// here — that causes the "Duplicate schema index" warning.
 userSchema.index({ email: 1, otpExpires: -1 });
-userSchema.index({ otpExpires: 1 }, { expireAfterSeconds: 0 });
 userSchema.index({ createdAt: -1 });
 
 userSchema.pre('save', async function (next) {

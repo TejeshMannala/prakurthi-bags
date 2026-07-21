@@ -15,7 +15,7 @@ const NotificationContext = createContext();
 const notifications = {
   login: {
     icon: <FiCheck />,
-    message: "Welcome to the Parkuthi Family",
+    message: "Welcome to the Prakruthi Family",
     color: "#2E5A44",
   },
 
