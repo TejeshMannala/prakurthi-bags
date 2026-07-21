@@ -125,13 +125,23 @@ const server = http.createServer(app);
 setupSocket(server);
 
 app.use(compression());
-// Cross-Origin headers: keep resource policy open (so images/uploads load
-// cross-origin) and DO NOT set Cross-Origin-Opener-Policy, otherwise Google
-// Login's popup window.postMessage is blocked ("origin_mismatch"-like error).
+
+// MUST be the first middleware AFTER compression. Render's edge proxy injects
+// `Cross-Origin-Opener-Policy: same-origin` which BLOCKS Google Identity
+// Services' popup postMessage credential hand-off entirely. Setting the header
+// here EARLY ensures it's present on ALL responses (including HTML, static
+// assets, API, etc.) before any other middleware runs.
+app.use((req, res, next) => {
+  res.setHeader('Cross-Origin-Opener-Policy', 'unsafe-none');
+  res.setHeader('Cross-Origin-Embedder-Policy', 'unsafe-none');
+  next();
+});
+
 app.use(
   helmet({
     crossOriginResourcePolicy: false,
     crossOriginEmbedderPolicy: false,
+    // helmet must NOT set COOP — we already set it to 'unsafe-none' above.
     crossOriginOpenerPolicy: false,
     contentSecurityPolicy: {
       directives: {
@@ -186,18 +196,6 @@ app.use(
   })
 );
 app.use(mongoSanitize());
-
-// Force COOP/COEP to unsafe-none on EVERY response. Render's edge proxy
-// injects `Cross-Origin-Opener-Policy: same-origin` by default, which BLOCKS
-// Google's `window.postMessage` credential hand-off ("Cross-Origin-Opener-Policy
-// policy would block the window.postMessage call") and silently breaks Google
-// Login / OTP popups. Setting it explicitly here overrides that default so the
-// Google Identity popup can deliver the id_token via postMessage.
-app.use((req, res, next) => {
-  res.setHeader('Cross-Origin-Opener-Policy', 'unsafe-none');
-  res.setHeader('Cross-Origin-Embedder-Policy', 'unsafe-none');
-  next();
-});
 
 const limiter = rateLimit({
     windowMs: 15 * 60 * 1000,
@@ -375,22 +373,37 @@ if (!adminIndexExists) {
   logger.info(`Admin dashboard verified: ${adminDist}`);
 }
 
-app.use('/admin', express.static(adminDist));
+app.use('/admin', express.static(adminDist, {
+  setHeaders: setGoogleCompatibleHeaders,
+}));
 app.get('/admin', (req, res) => {
+  setGoogleCompatibleHeaders(res);
   const adminIndex = path.join(adminDist, 'index.html');
   if (fs.existsSync(adminIndex)) return res.sendFile(adminIndex);
   res.status(404).send('Admin dashboard not built. Run: cd admin-dashboard && npm run build');
 });
 app.get('/admin/*', (req, res) => {
+  setGoogleCompatibleHeaders(res);
   const adminIndex = path.join(adminDist, 'index.html');
   if (fs.existsSync(adminIndex)) return res.sendFile(adminIndex);
   res.status(404).send('Admin dashboard not built.');
 });
 
+// Defense-in-depth: set COOP/COEP on every response, including static HTML
+// and the SPA catch-all. The early middleware at the top of the stack already
+// does this, but Render's edge proxy can strip or override it — so we also
+// set it here at the point of delivery.
+// Function declaration (not const) so it's hoisted for use by admin routes below.
+function setGoogleCompatibleHeaders(res) {
+  res.setHeader('Cross-Origin-Opener-Policy', 'unsafe-none');
+  res.setHeader('Cross-Origin-Embedder-Policy', 'unsafe-none');
+}
+
 if (frontendDir) {
   app.use(express.static(frontendDir, {
     index: false,
     setHeaders: (res, filePath) => {
+      setGoogleCompatibleHeaders(res);
       if (filePath.endsWith('index.html')) {
         res.set('Cache-Control', 'no-cache, no-store, must-revalidate');
         res.set('Pragma', 'no-cache');
@@ -399,10 +412,14 @@ if (frontendDir) {
     },
   }));
 }
-app.use(express.static(frontendPublic, { index: false }));
+app.use(express.static(frontendPublic, {
+  index: false,
+  setHeaders: setGoogleCompatibleHeaders,
+}));
 
 // SPA catch-all (MUST be last non-error route)
 app.get('*', (req, res) => {
+  setGoogleCompatibleHeaders(res);
   if (req.path.startsWith('/api')) {
     return res.status(404).json({ message: 'API route not found' });
   }
