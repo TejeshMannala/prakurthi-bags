@@ -14,7 +14,7 @@ const RETRY_BASE_DELAY = 500; // ms, exponential backoff base
 // (the frontend axios timeout is 30s; Gmail from Render can hang far longer on
 // a blocked SMTP connection). Anything beyond this is treated as a failure and
 // the request proceeds (OTP was already saved to the DB).
-const SEND_HARD_TIMEOUT_MS = 12000;
+const SEND_HARD_TIMEOUT_MS = 25000;
 
 let cachedTransporter = null;
 let verificationState = { ok: null, reason: null, at: 0 };
@@ -56,11 +56,13 @@ const createTransporter = (portOverride, secureOverride) => {
     requireTLS: !secure,
     auth: { user, pass },
     tls: { rejectUnauthorized: false },
-    // Keep these short so a blocked/dead SMTP connection fails fast instead of
-    // hanging the request for 30-60s.
-    connectionTimeout: 8000,
-    greetingTimeout: 8000,
-    socketTimeout: 10000,
+    // Render's free tier has slower outbound SMTP connections to Gmail.
+    // These generous timeouts prevent premature failures on cold starts and
+    // slow network paths. The SEND_HARD_TIMEOUT_MS upper bound (25s) still
+    // prevents requests from hanging indefinitely.
+    connectionTimeout: 15000,
+    greetingTimeout: 15000,
+    socketTimeout: 20000,
   });
   logger.debug(`SMTP transporter created: ${host}:${port} secure=${secure}`);
   return cachedTransporter;
