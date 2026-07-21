@@ -1,5 +1,6 @@
 const User = require('../models/User');
 const { generateAccessToken, generateRefreshToken, verifyRefreshToken } = require('../middleware/auth');
+const { OAuth2Client } = require('google-auth-library');
 const crypto = require('crypto');
 const nodemailer = require('nodemailer');
 
@@ -73,6 +74,45 @@ const login = async (req, res) => {
     success: true,
     data: { user, accessToken, refreshToken },
   });
+};
+
+const googleAuth = async (req, res) => {
+  const { idToken } = req.body;
+
+  if (!idToken) {
+    return res.status(400).json({ success: false, message: 'Google ID token is required.' });
+  }
+
+  try {
+    const client = new OAuth2Client(process.env.GOOGLE_CLIENT_ID);
+    const ticket = await client.verifyIdToken({
+      idToken,
+      audience: process.env.GOOGLE_CLIENT_ID,
+    });
+    const payload = ticket.getPayload();
+    const { email, name, sub: googleId } = payload;
+
+    let user = await User.findOne({ email });
+    if (!user) {
+      user = await User.create({ name, email, googleId });
+    } else if (!user.googleId) {
+      user.googleId = googleId;
+      await user.save({ validateBeforeSave: false });
+    }
+
+    const accessToken = generateAccessToken(user._id);
+    const refreshToken = generateRefreshToken(user._id);
+
+    user.refreshToken = refreshToken;
+    await user.save({ validateBeforeSave: false });
+
+    res.status(200).json({
+      success: true,
+      data: { user, accessToken, refreshToken },
+    });
+  } catch (error) {
+    res.status(401).json({ success: false, message: 'Google authentication failed.' });
+  }
 };
 
 const refresh = async (req, res) => {
@@ -258,4 +298,4 @@ const getAllUsers = async (req, res) => {
   res.json({ success: true, data: users });
 };
 
-module.exports = { register, login, refresh, logout, getMe, updateProfile, changePassword, forgotPassword, verifyOtp, resetPassword, getAllUsers };
+module.exports = { register, login, googleAuth, refresh, logout, getMe, updateProfile, changePassword, forgotPassword, verifyOtp, resetPassword, getAllUsers };
