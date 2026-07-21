@@ -22,7 +22,7 @@
     "build": "react-scripts build",
     "lint": "react-scripts test --watchAll=false --passWithNoTests"
   },
-  "proxy": "http://localhost:5000",
+  "proxy": "/",
   "browserslist": {
     "production": [
       ">0.2%",
