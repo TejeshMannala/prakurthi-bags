@@ -347,19 +347,25 @@ if (fs.existsSync(faviconPath)) {
   });
 }
 
+const frontendDist = path.join(__dirname, '..', 'frontend', 'dist');
 const frontendBuild = path.join(__dirname, '..', 'frontend', 'build');
 const adminDist = path.join(__dirname, '..', 'admin-dashboard', 'dist');
 const frontendPublic = path.join(__dirname, '..', 'frontend', 'public');
 
-// --- Startup verification: confirm build directories exist ---
-const frontendIndexExists = fs.existsSync(path.join(frontendBuild, 'index.html'));
-if (!frontendIndexExists) {
-  logger.error(`SPA WARNING: index.html not found at ${frontendIndexExists ? '(exists)' : frontendBuild}`);
+// Support CRA (build/) or Vite (dist/) frontend builds.
+let frontendDir = null;
+if (fs.existsSync(path.join(frontendBuild, 'index.html'))) {
+  frontendDir = frontendBuild;
+} else if (fs.existsSync(path.join(frontendDist, 'index.html'))) {
+  frontendDir = frontendDist;
+}
+if (frontendDir) {
+  logger.info(`Frontend build verified: ${frontendDir}`);
+} else {
+  logger.error(`SPA WARNING: index.html not found at ${frontendBuild} or ${frontendDist}`);
   logger.error('  The frontend build directory is missing or empty.');
   logger.error('  Run: cd frontend && npm install && npm run build');
   logger.error('  SPA routes will show a fallback page until the build is present.');
-} else {
-  logger.info(`Frontend build verified: ${frontendBuild}`);
 }
 
 const adminIndexExists = fs.existsSync(path.join(adminDist, 'index.html'));
@@ -381,16 +387,18 @@ app.get('/admin/*', (req, res) => {
   res.status(404).send('Admin dashboard not built.');
 });
 
-app.use(express.static(frontendBuild, {
-  index: false,
-  setHeaders: (res, filePath) => {
-    if (filePath.endsWith('index.html')) {
-      res.set('Cache-Control', 'no-cache, no-store, must-revalidate');
-      res.set('Pragma', 'no-cache');
-      res.set('Expires', '0');
-    }
-  },
-}));
+if (frontendDir) {
+  app.use(express.static(frontendDir, {
+    index: false,
+    setHeaders: (res, filePath) => {
+      if (filePath.endsWith('index.html')) {
+        res.set('Cache-Control', 'no-cache, no-store, must-revalidate');
+        res.set('Pragma', 'no-cache');
+        res.set('Expires', '0');
+      }
+    },
+  }));
+}
 app.use(express.static(frontendPublic, { index: false }));
 
 // SPA catch-all (MUST be last non-error route)
@@ -403,15 +411,17 @@ app.get('*', (req, res) => {
     if (fs.existsSync(favicon)) return res.sendFile(favicon);
     return res.status(204).end();
   }
-  const indexHtml = path.join(frontendBuild, 'index.html');
-  if (fs.existsSync(indexHtml)) {
-    res.set('Cache-Control', 'no-cache, no-store, must-revalidate');
-    res.set('Pragma', 'no-cache');
-    res.set('Expires', '0');
-    return res.sendFile(indexHtml);
+  if (frontendDir) {
+    const indexHtml = path.join(frontendDir, 'index.html');
+    if (fs.existsSync(indexHtml)) {
+      res.set('Cache-Control', 'no-cache, no-store, must-revalidate');
+      res.set('Pragma', 'no-cache');
+      res.set('Expires', '0');
+      return res.sendFile(indexHtml);
+    }
   }
-  logger.error(`SPA fallback: index.html not found at ${indexHtml}`);
-  logger.error('  Build the frontend: cd frontend && npm install && npm run build');
+  logger.error(`SPA fallback: index.html not found — no frontend build directory exists.`);
+  logger.error('  Run the build: cd frontend && npm install && npm run build');
   res.status(200).send(
     '<!DOCTYPE html><html><head><meta charset="utf-8"><meta http-equiv="refresh" content="5;url=/"></head><body style="display:flex;justify-content:center;align-items:center;height:100vh;margin:0;font-family:system-ui;background:#f0f7f1"><div style="text-align:center;padding:40px"><h2 style="color:#2E5A44">Prakruthi Bags</h2><p style="color:#666">The application is being deployed. This page will refresh automatically.</p><p style="color:#999;font-size:13px;margin-top:20px"><a href="/" style="color:#2E5A44">Click here if it doesn\'t reload</a></p></div></body></html>'
   );
