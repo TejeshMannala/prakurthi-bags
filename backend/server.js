@@ -326,41 +326,6 @@ app.use('/api', (req, res) => {
   res.status(404).json({ message: `API route not found: ${req.method} ${req.originalUrl}` });
 });
 
-// Centralized error handler
-app.use((err, req, res, next) => {
-  let statusCode = err.statusCode || 500;
-  let message = err.message || 'Internal server error.';
-  let code = err.code || 'SERVER_ERROR';
-
-  const errMsg = err.message || '';
-  if (statusCode === 500) {
-    if (/ECONNREFUSED|ETIMEDOUT|ESOCKET|ECONNRESET|getaddrinfo|network/i.test(errMsg) || err.code === 'ETIMEDOUT' || err.code === 'ECONNREFUSED') {
-      statusCode = 503; message = 'Service temporarily unavailable. Please try again shortly.'; code = 'NETWORK_ERROR';
-    } else if (/Cast to ObjectId failed|CastError/i.test(errMsg)) {
-      statusCode = 400; message = 'Invalid identifier provided.'; code = 'INVALID_ID';
-    } else if (/duplicate key|E11000/i.test(errMsg)) {
-      statusCode = 409; message = 'A record with this value already exists.'; code = 'DUPLICATE';
-    } else if (/validation failed|ValidationError/i.test(errMsg)) {
-      statusCode = 400; message = 'Validation failed. Please check your input.'; code = 'VALIDATION_ERROR';
-    } else if (/jwt|token/i.test(errMsg)) {
-      statusCode = 401; message = 'Invalid or expired token.'; code = 'INVALID_TOKEN';
-    }
-  }
-
-  if (statusCode >= 500) {
-    logger.error(`${req.method} ${req.originalUrl} -> ${statusCode} ${code}`, err.stack || err.message);
-  } else {
-    logger.debug(`${req.method} ${req.originalUrl} -> ${statusCode} ${code}`);
-  }
-
-  res.status(statusCode).json({
-    success: false,
-    message,
-    errorCode: code,
-    timestamp: new Date().toISOString(),
-  });
-});
-
 // ---------------------------------------------------------------------------
 // Static files + SPA fallback
 // ---------------------------------------------------------------------------
@@ -400,7 +365,7 @@ app.use(express.static(frontendBuild, {
     }
   },
 }));
-app.use(express.static(frontendPublic));
+app.use(express.static(frontendPublic, { index: false }));
 
 // SPA catch-all (MUST be last non-error route)
 app.get('*', (req, res) => {
@@ -423,6 +388,43 @@ app.get('*', (req, res) => {
   res.status(200).send(
     '<!DOCTYPE html><html><head><meta charset="utf-8"><meta http-equiv="refresh" content="0;url=/"></head><body style="display:flex;justify-content:center;align-items:center;height:100vh;margin:0;font-family:system-ui"><p>Reloading... <a href="/">Click here</a></p></body></html>'
   );
+});
+
+// ---------------------------------------------------------------------------
+// Centralized error handler (MUST be last middleware — catches all errors)
+// ---------------------------------------------------------------------------
+app.use((err, req, res, next) => {
+  let statusCode = err.statusCode || 500;
+  let message = err.message || 'Internal server error.';
+  let code = err.code || 'SERVER_ERROR';
+
+  const errMsg = err.message || '';
+  if (statusCode === 500) {
+    if (/ECONNREFUSED|ETIMEDOUT|ESOCKET|ECONNRESET|getaddrinfo|network/i.test(errMsg) || err.code === 'ETIMEDOUT' || err.code === 'ECONNREFUSED') {
+      statusCode = 503; message = 'Service temporarily unavailable. Please try again shortly.'; code = 'NETWORK_ERROR';
+    } else if (/Cast to ObjectId failed|CastError/i.test(errMsg)) {
+      statusCode = 400; message = 'Invalid identifier provided.'; code = 'INVALID_ID';
+    } else if (/duplicate key|E11000/i.test(errMsg)) {
+      statusCode = 409; message = 'A record with this value already exists.'; code = 'DUPLICATE';
+    } else if (/validation failed|ValidationError/i.test(errMsg)) {
+      statusCode = 400; message = 'Validation failed. Please check your input.'; code = 'VALIDATION_ERROR';
+    } else if (/jwt|token/i.test(errMsg)) {
+      statusCode = 401; message = 'Invalid or expired token.'; code = 'INVALID_TOKEN';
+    }
+  }
+
+  if (statusCode >= 500) {
+    logger.error(`${req.method} ${req.originalUrl} -> ${statusCode} ${code}`, err.stack || err.message);
+  } else {
+    logger.debug(`${req.method} ${req.originalUrl} -> ${statusCode} ${code}`);
+  }
+
+  res.status(statusCode).json({
+    success: false,
+    message,
+    errorCode: code,
+    timestamp: new Date().toISOString(),
+  });
 });
 
 // ---------------------------------------------------------------------------
