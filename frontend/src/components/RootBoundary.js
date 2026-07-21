@@ -32,27 +32,32 @@ class RootBoundary extends React.Component {
             minHeight: '100vh',
             padding: 24,
             textAlign: 'center',
-            fontFamily: 'system-ui, sans-serif',
-            background: '#f8faf8',
+            fontFamily: "'Inter', system-ui, sans-serif",
+            background: '#F8F5EE',
           }}>
+            <img
+              src={process.env.PUBLIC_URL + '/icon-192.png'}
+              alt="Prakruthi Bags"
+              style={{ width: 56, height: 56, borderRadius: 14, marginBottom: 20, boxShadow: '0 4px 16px rgba(46,90,68,0.15)' }}
+            />
             <div style={{
-              width: 64, height: 64, borderRadius: '50%',
+              width: 56, height: 56, borderRadius: '50%',
               background: '#fef3c7', color: '#f59e0b',
               display: 'flex', alignItems: 'center', justifyContent: 'center',
-              fontSize: 28, marginBottom: 20,
+              fontSize: 24, marginBottom: 16,
             }}>
               !
             </div>
-            <h2 style={{ color: '#374151', marginBottom: 8, fontSize: 20 }}>
+            <h2 style={{ color: '#374151', marginBottom: 8, fontSize: 20, fontWeight: 700 }}>
               Connection Problem
             </h2>
-            <p style={{ color: '#6b7280', fontSize: 14, marginBottom: 20, maxWidth: 400 }}>
+            <p style={{ color: '#6b7280', fontSize: 14, marginBottom: 24, maxWidth: 400, lineHeight: 1.6 }}>
               It looks like you're offline or the server is unreachable. Please check your internet connection and try again.
             </p>
             <button
               onClick={() => window.location.reload()}
               style={{
-                padding: '10px 24px',
+                padding: '12px 28px',
                 background: '#2E5A44',
                 color: '#fff',
                 border: 'none',
@@ -60,6 +65,7 @@ class RootBoundary extends React.Component {
                 cursor: 'pointer',
                 fontWeight: 600,
                 fontSize: 14,
+                fontFamily: "'Inter', system-ui, sans-serif",
               }}
             >
               Try Again
@@ -77,20 +83,25 @@ class RootBoundary extends React.Component {
           minHeight: '100vh',
           padding: 24,
           textAlign: 'center',
-          fontFamily: 'system-ui, sans-serif',
-          background: '#f8faf8',
+          fontFamily: "'Inter', system-ui, sans-serif",
+          background: '#F8F5EE',
         }}>
-          <h2 style={{ color: '#dc2626', marginBottom: 8, fontSize: 22 }}>
+          <img
+            src={process.env.PUBLIC_URL + '/icon-192.png'}
+            alt="Prakruthi Bags"
+            style={{ width: 56, height: 56, borderRadius: 14, marginBottom: 20, boxShadow: '0 4px 16px rgba(46,90,68,0.15)' }}
+          />
+          <h2 style={{ color: '#dc2626', marginBottom: 8, fontSize: 22, fontWeight: 700 }}>
             Something went wrong
           </h2>
-          <p style={{ color: '#6b7280', fontSize: 14, marginBottom: 20, maxWidth: 400 }}>
+          <p style={{ color: '#6b7280', fontSize: 14, marginBottom: 24, maxWidth: 400, lineHeight: 1.6 }}>
             {this.state.error?.message || 'An unexpected error occurred.'}
           </p>
           {process.env.NODE_ENV !== 'production' && this.state.error && (
             <pre style={{
               background: '#fef2f2',
               border: '1px solid #fecaca',
-              borderRadius: 6,
+              borderRadius: 8,
               padding: 12,
               fontSize: 12,
               maxWidth: '90vw',
@@ -109,7 +120,7 @@ class RootBoundary extends React.Component {
                 window.location.href = '/';
               }}
               style={{
-                padding: '10px 24px',
+                padding: '12px 28px',
                 background: '#dc2626',
                 color: '#fff',
                 border: 'none',
@@ -117,6 +128,7 @@ class RootBoundary extends React.Component {
                 cursor: 'pointer',
                 fontWeight: 600,
                 fontSize: 14,
+                fontFamily: "'Inter', system-ui, sans-serif",
               }}
             >
               Clear Data & Reload
@@ -124,7 +136,7 @@ class RootBoundary extends React.Component {
             <button
               onClick={() => window.location.reload()}
               style={{
-                padding: '10px 24px',
+                padding: '12px 28px',
                 background: '#2E5A44',
                 color: '#fff',
                 border: 'none',
@@ -132,6 +144,7 @@ class RootBoundary extends React.Component {
                 cursor: 'pointer',
                 fontWeight: 600,
                 fontSize: 14,
+                fontFamily: "'Inter', system-ui, sans-serif",
               }}
             >
               Reload Page
