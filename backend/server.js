@@ -217,6 +217,7 @@ const allowedOrigins = [
   'http://localhost:4173',
   'http://localhost:5000',
   'https://prakruthi-bags-frontend.onrender.com',
+  'https://prakruthi-bags-1-frontend.onrender.com',
   'https://prakurthi-bags.onrender.com',
   'https://prakruthi-bags-frontend.pages.dev',
 ].filter(Boolean);
@@ -235,7 +236,7 @@ app.use(
         callback(null, true);
       } else {
         logger.warn(`[CORS] Blocked origin: ${origin}`);
-        callback(null, false);
+        callback(new Error(`Not allowed by CORS: ${origin}`));
       }
     },
     credentials: true,
