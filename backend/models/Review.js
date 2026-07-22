@@ -136,16 +136,8 @@ reviewSchema.statics.recalculateProductRating = async function (productId) {
   });
 };
 
-reviewSchema.post('save', async function () {
-  await this.constructor.recalculateProductRating(this.product);
-});
-
-reviewSchema.post('findOneAndUpdate', async function (doc) {
-  if (doc) await doc.constructor.recalculateProductRating(doc.product);
-});
-
-reviewSchema.post('findOneAndDelete', async function (doc) {
-  if (doc) await doc.constructor.recalculateProductRating(doc.product);
-});
+// NOTE: Rating recalculation is handled explicitly by the controller
+// (reviewController.js) after every create/update/delete to avoid double
+// aggregation that would occur if model hooks + controller both called it.
 
 module.exports = mongoose.model('Review', reviewSchema);

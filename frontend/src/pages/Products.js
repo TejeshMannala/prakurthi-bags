@@ -98,7 +98,7 @@ const Products = () => {
       if (filters.weightCapacities.length) params.set('weightCapacity', filters.weightCapacities.join(','));
       params.set('sort', sort);
       params.set('limit', String(PAGE_SIZE));
-      params.set('skip', String((pageNum - 1) * PAGE_SIZE));
+      params.set('page', String(pageNum));
 
       const { data } = await api.get(`/api/products?${params.toString()}`);
       const raw = Array.isArray(data?.products) ? data.products : (Array.isArray(data) ? data : []);

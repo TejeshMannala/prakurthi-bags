@@ -31,9 +31,11 @@ const Profile = () => {
 
   const handleLogout = async () => {
     try {
+      await api.delete('/api/cart');
+    } catch {}
+    try {
       await api.post('/api/auth/logout');
-    } catch {
-    }
+    } catch {}
     localStorage.removeItem('token');
     logout();
     navigate('/');

@@ -4,17 +4,18 @@ const { cache } = require('../utils/redis');
 
 const getPageBySlug = async (req, res) => {
   try {
-    const { slug } = req.params;
+    const slug = req.params.page || req.params.slug;
 
     if (!slug || !slug.trim()) {
       return res.status(400).json({ message: 'Page slug is required.' });
     }
 
-    const cacheKey = `page:${slug}`;
+    const normalizedSlug = slug.toLowerCase().trim();
+    const cacheKey = `page:${normalizedSlug}`;
     const cached = await cache.get(cacheKey);
     if (cached) return res.json(cached);
 
-    const page = await PageContent.findOne({ page: slug.toLowerCase().trim(), published: true }).lean();
+    const page = await PageContent.findOne({ page: normalizedSlug, published: true }).lean();
     if (!page) {
       return res.status(404).json({ message: 'Page not found.' });
     }
@@ -40,15 +41,16 @@ const listPages = async (req, res) => {
 
 const updatePage = async (req, res) => {
   try {
-    const { slug } = req.params;
+    const slug = req.params.page || req.params.slug;
     const { title, content, sections, meta, published } = req.body;
 
     if (!slug || !slug.trim()) {
       return res.status(400).json({ message: 'Page slug is required.' });
     }
 
+    const normalizedSlug = slug.toLowerCase().trim();
     const page = await PageContent.findOneAndUpdate(
-      { page: slug.toLowerCase().trim() },
+      { page: normalizedSlug },
       {
         title: title || '',
         content: content || '',
@@ -59,7 +61,8 @@ const updatePage = async (req, res) => {
       { upsert: true, new: true, runValidators: true }
     );
 
-    await cache.del(`page:${slug.toLowerCase().trim()}`);
+    await cache.del(`page:${normalizedSlug}`);
+    await cache.invalidateContentCache();
 
     res.json(page);
   } catch (error) {
