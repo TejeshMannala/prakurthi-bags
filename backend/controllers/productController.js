@@ -1,37 +1,38 @@
-const mongoose = require('mongoose');
-const Product = require('../models/Product');
-const { cache } = require('../utils/redis');
-const escapeRegex = require('../utils/escapeRegex');
+  const mongoose = require('mongoose');
+  const Product = require('../models/Product');
+  const { cache } = require('../utils/redis');
+  const escapeRegex = require('../utils/escapeRegex');
+  const logger = require('../utils/logger');
 
-const getProducts = async (req, res) => {
-  try {
-    const {
-      page = 1,
-      limit = 12,
-      sort = 'newest',
-      category,
-      subCategory,
-      brand,
-      color,
-      size,
-      material,
-      gender,
-      weightCapacity,
-      minPrice,
-      maxPrice,
-      rating,
-      minRating,
-      discount,
-      minDiscount,
-      search,
-      featured,
-      bestSeller,
-      tags,
-      inStock,
-    } = req.query;
+  const getProducts = async (req, res) => {
+    try {
+      const {
+        page = 1,
+        limit = 12,
+        sort = 'newest',
+        category,
+        subCategory,
+        brand,
+        color,
+        size,
+        material,
+        gender,
+        weightCapacity,
+        minPrice,
+        maxPrice,
+        rating,
+        minRating,
+        discount,
+        minDiscount,
+        search,
+        featured,
+        bestSeller,
+        tags,
+        inStock,
+      } = req.query;
 
-    const Category = mongoose.model('Category');
-    const filter = { isActive: true };
+      const Category = mongoose.model('Category');
+      const filter = { isActive: true };
 
     const toList = (val) =>
       Array.isArray(val)
@@ -167,6 +168,10 @@ const getProductById = async (req, res) => {
   try {
     const { id } = req.params;
 
+    if (!mongoose.Types.ObjectId.isValid(id)) {
+      return res.status(400).json({ message: 'Invalid product ID format.' });
+    }
+
     const cacheKey = `product:${id}`;
     const cached = await cache.get(cacheKey);
     if (cached) return res.json(cached);
@@ -179,6 +184,7 @@ const getProductById = async (req, res) => {
     await cache.set(cacheKey, product, 300);
     res.json(product);
   } catch (error) {
+    logger.error(`getProductById error for id=${req.params.id}:`, error.message);
     res.status(500).json({ message: error.message });
   }
 };
@@ -295,6 +301,11 @@ const getCategories = async (req, res) => {
 const getRelatedProducts = async (req, res) => {
   try {
     const { id } = req.params;
+
+    if (!mongoose.Types.ObjectId.isValid(id)) {
+      return res.status(400).json({ message: 'Invalid product ID format.' });
+    }
+
     const product = await Product.findById(id).lean();
     if (!product) {
       return res.status(404).json({ message: 'Product not found.' });

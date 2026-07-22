@@ -34,7 +34,7 @@ services:
       - key: JWT_EXPIRE
         value: 30d
       - key: FRONTEND_URL
-        value: https://prakruthi-bags-frontend.onrender.com
+        value: https://prakurthi-bags-1-frontend.onrender.com
       - key: ADMIN_URL
         value: https://prakurthi-bags.onrender.com
       - key: GOOGLE_CLIENT_ID

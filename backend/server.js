@@ -216,9 +216,15 @@ const allowedOrigins = [
   'http://localhost:5173',
   'http://localhost:4173',
   'http://localhost:5000',
-  'https://prakruthi-bags-frontend.onrender.com',
+  // Frontend origins — both "prakurthi" (canonical) and "prakruthi" (legacy)
+  // spellings are included because Render may have services with either name.
+  'https://prakurthi-bags-1-frontend.onrender.com',
   'https://prakruthi-bags-1-frontend.onrender.com',
+  'https://prakurthi-bags-frontend.onrender.com',
+  'https://prakruthi-bags-frontend.onrender.com',
+  // Backend origins
   'https://prakurthi-bags.onrender.com',
+  'https://prakruthi-bags.onrender.com',
   'https://prakruthi-bags-frontend.pages.dev',
 ].filter(Boolean);
 
@@ -289,6 +295,21 @@ app.get('/api/email-health', async (req, res) => {
 });
 
 app.use('/api/', dbCheck);
+
+// ---------------------------------------------------------------------------
+// Request logging (production debugging)
+// ---------------------------------------------------------------------------
+app.use('/api', (req, res, next) => {
+  const start = Date.now();
+  const originalJson = res.json.bind(res);
+  res.json = function (body) {
+    const duration = Date.now() - start;
+    const origin = req.headers.origin || '-';
+    logger.info(`[${req.method}] ${req.originalUrl} origin=${origin} status=${res.statusCode} ${duration}ms`);
+    return originalJson(body);
+  };
+  next();
+});
 
 // ---------------------------------------------------------------------------
 // Routes
