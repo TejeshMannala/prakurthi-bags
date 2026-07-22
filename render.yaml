@@ -1,13 +1,16 @@
 # =============================================================================
 # Production deployment for Prakurthi Bags (MERN) on Render.
 #
-# Topology: SINGLE web service that builds AND serves BOTH the customer
-# frontend and the admin dashboard from the same Express origin.
-# https://prakurthi-bags.onrender.com
+# Topology: This YAML configures the BACKEND API service ONLY.
+# The frontend is deployed separately as a Static Site.
 #
-# If you also deploy a SEPARATE frontend static site, set
-# REACT_APP_API_URL to https://prakurthi-bags.onrender.com in that
-# service's env vars (or in frontend/.env.production).
+# Frontend static site (Render):
+#   Build: npm install && npm run build
+#   Publish: build
+#
+# Backend API (this service):
+#   Build: npm install
+#   Start: npm start
 # =============================================================================
 
 services:
@@ -15,13 +18,8 @@ services:
     name: prakurthi-bags
     env: node
     plan: free
-    buildCommand: |
-      npm --prefix backend install
-      npm --prefix frontend install
-      npm --prefix frontend run build
-      npm --prefix admin-dashboard install
-      npm --prefix admin-dashboard run build
-    startCommand: node backend/server.js
+    buildCommand: npm install
+    startCommand: npm start
     autoDeploy: true
     healthCheckPath: /api/health
     envVars:
@@ -31,17 +29,12 @@ services:
         value: 5000
       - key: MONGO_URI
         sync: false
-      # IMPORTANT: Do NOT use generateValue for JWT_SECRET — set a fixed value
-      # via the Render dashboard. A regenerated secret invalidates ALL existing
-      # user sessions (tokens). Use a long random string (min 32 chars).
       - key: JWT_SECRET
         sync: false
       - key: JWT_EXPIRE
         value: 30d
-      # FRONTEND_URL is the origin used by CORS and Socket.IO.
-      # Set to the BACKEND origin (since this service serves everything).
       - key: FRONTEND_URL
-        value: https://prakurthi-bags.onrender.com
+        value: https://prakruthi-bags-frontend.onrender.com
       - key: ADMIN_URL
         value: https://prakurthi-bags.onrender.com
       - key: GOOGLE_CLIENT_ID
@@ -50,15 +43,6 @@ services:
         sync: false
       - key: GOOGLE_LOGIN_ENABLED
         value: 'true'
-      # SMTP Email — forgot-password / OTP.
-      # For Gmail: enable 2FA, then generate a 16-char App Password at
-      # https://myaccount.google.com/apppasswords
-      # Set SMTP_USER and SMTP_PASS via Render dashboard (sync: false)
-      # so credentials stay secret.
-      # IMPORTANT: SMTP_PORT and SMTP_SECURE below are defaults. If you already
-      # set SMTP_PORT and SMTP_SECURE in the Render dashboard manually, comment
-      # them out here to avoid conflicts. Port 587 (STARTTLS) is the most
-      # reliable for Gmail. Port 465 (SSL) also works but requires secure=true.
       - key: SMTP_HOST
         value: smtp.gmail.com
       - key: SMTP_PORT
@@ -68,8 +52,4 @@ services:
       - key: SMTP_USER
         sync: false
       - key: SMTP_PASS
-        sync: false
-      # Set to verify the Render deploy: https://your-service.onrender.com
-      # Must match the production URL exactly (no trailing slash).
-      - key: REACT_APP_GOOGLE_CLIENT_ID
         sync: false

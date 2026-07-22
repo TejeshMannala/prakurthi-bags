@@ -228,9 +228,15 @@ const Profile = () => {
             </div>
           )}
           {user.role === 'admin' && (
-            <Link to="/admin" className="btn btn-secondary" style={{ marginTop: 16, display: 'inline-flex', gap: 8 }}>
+            <a
+              href={`${process.env.REACT_APP_API_URL || window.location.origin}/admin`}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="btn btn-secondary"
+              style={{ marginTop: 16, display: 'inline-flex', gap: 8 }}
+            >
               <FiShield /> Go to Admin Panel
-            </Link>
+            </a>
           )}
         </div>
 

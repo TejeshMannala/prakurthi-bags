@@ -238,9 +238,16 @@ const Navbar = () => {
                           <FiStar size={16} style={{ color: '#1B5E20', flexShrink: 0 }} /> <span>Wishlist</span>
                         </Link>
                         {user.role === 'admin' && (
-                          <Link to="/admin" className="profile-menu-item" style={{ color: '#1F2937' }} onClick={() => setProfileOpen(false)}>
+                          <a
+                            href={`${process.env.REACT_APP_API_URL || window.location.origin}/admin`}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="profile-menu-item"
+                            style={{ color: '#1F2937' }}
+                            onClick={() => setProfileOpen(false)}
+                          >
                             <FiShield size={16} style={{ color: '#1B5E20', flexShrink: 0 }} /> <span>Admin Panel</span>
-                          </Link>
+                          </a>
                         )}
                         <div className="profile-menu-divider" />
                         <button className="profile-menu-item" style={{ color: '#1F2937' }} onClick={handleLogout}>

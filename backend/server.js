@@ -216,37 +216,26 @@ const allowedOrigins = [
   'http://localhost:5173',
   'http://localhost:4173',
   'http://localhost:5000',
-  'https://prakurthi-bags.onrender.com',
-  'https://prakruthi-bags.onrender.com',
-  'https://prakurthi-bags-1-frontend.onrender.com',
   'https://prakruthi-bags-frontend.onrender.com',
-  /\.onrender\.com$/,
+  'https://prakurthi-bags.onrender.com',
+  'https://prakruthi-bags-frontend.pages.dev',
 ].filter(Boolean);
 
-// De-duplicate string entries, keep regex
 const uniqueStrings = [...new Set(allowedOrigins.filter((o) => typeof o === 'string'))];
-allowedOrigins.length = 0;
-uniqueStrings.forEach((o) => allowedOrigins.push(o));
-allowedOrigins.push(/\.onrender\.com$/);
 
-logger.debug(`CORS allowed: ${uniqueStrings.join(', ')}`);
+logger.info(`CORS allowed origins: ${uniqueStrings.join(', ')}`);
 
 app.use(
   cors({
     origin: function (origin, callback) {
       if (!origin) return callback(null, true);
-      // Normalize: strip trailing slash so "http://localhost:5000/" matches
       const normalized = origin.replace(/\/+$/, '');
-      const allowed = allowedOrigins.some((o) => {
-        if (typeof o === 'string') return normalized === o;
-        if (o instanceof RegExp) return o.test(normalized) || o.test(origin);
-        return false;
-      });
+      const allowed = uniqueStrings.some((o) => normalized === o);
       if (allowed) {
         callback(null, true);
       } else {
-        logger.warn(`CORS blocked origin: ${origin}`);
-        callback(new Error('Not allowed by CORS'));
+        logger.warn(`[CORS] Blocked origin: ${origin}`);
+        callback(null, false);
       }
     },
     credentials: true,
@@ -333,115 +322,44 @@ app.use('/api', (req, res) => {
 });
 
 // ---------------------------------------------------------------------------
-// Static files + SPA fallback
+// Admin dashboard static serving (if present)
 // ---------------------------------------------------------------------------
-const faviconPath = path.join(__dirname, '..', 'frontend', 'public', 'favicon.ico');
-if (fs.existsSync(faviconPath)) {
-  app.get('/favicon.ico', (req, res) => res.sendFile(faviconPath));
-} else {
-  app.get('/favicon.ico', (req, res) => {
-    res.set('Content-Type', 'image/x-icon');
-    res.status(204).end();
-  });
-}
-
-const frontendDist = path.join(__dirname, '..', 'frontend', 'dist');
-const frontendBuild = path.join(__dirname, '..', 'frontend', 'build');
 const adminDist = path.join(__dirname, '..', 'admin-dashboard', 'dist');
-const frontendPublic = path.join(__dirname, '..', 'frontend', 'public');
-
-// Support CRA (build/) or Vite (dist/) frontend builds.
-let frontendDir = null;
-if (fs.existsSync(path.join(frontendBuild, 'index.html'))) {
-  frontendDir = frontendBuild;
-} else if (fs.existsSync(path.join(frontendDist, 'index.html'))) {
-  frontendDir = frontendDist;
-}
-if (frontendDir) {
-  logger.info(`Frontend build verified: ${frontendDir}`);
-} else {
-  logger.error(`SPA WARNING: index.html not found at ${frontendBuild} or ${frontendDist}`);
-  logger.error('  The frontend build directory is missing or empty.');
-  logger.error('  Run: cd frontend && npm install && npm run build');
-  logger.error('  SPA routes will show a fallback page until the build is present.');
-}
-
 const adminIndexExists = fs.existsSync(path.join(adminDist, 'index.html'));
-if (!adminIndexExists) {
-  logger.warn(`Admin dashboard not built at ${adminDist} — /admin will show 404`);
-} else {
-  logger.info(`Admin dashboard verified: ${adminDist}`);
-}
-
-app.use('/admin', express.static(adminDist, {
-  setHeaders: setGoogleCompatibleHeaders,
-}));
-app.get('/admin', (req, res) => {
-  setGoogleCompatibleHeaders(res);
-  const adminIndex = path.join(adminDist, 'index.html');
-  if (fs.existsSync(adminIndex)) return res.sendFile(adminIndex);
-  res.status(404).send('Admin dashboard not built. Run: cd admin-dashboard && npm run build');
-});
-app.get('/admin/*', (req, res) => {
-  setGoogleCompatibleHeaders(res);
-  const adminIndex = path.join(adminDist, 'index.html');
-  if (fs.existsSync(adminIndex)) return res.sendFile(adminIndex);
-  res.status(404).send('Admin dashboard not built.');
-});
-
-// Defense-in-depth: set COOP/COEP on every response, including static HTML
-// and the SPA catch-all. The early middleware at the top of the stack already
-// does this, but Render's edge proxy can strip or override it — so we also
-// set it here at the point of delivery.
-// Function declaration (not const) so it's hoisted for use by admin routes below.
-function setGoogleCompatibleHeaders(res) {
-  res.setHeader('Cross-Origin-Opener-Policy', 'unsafe-none');
-  res.setHeader('Cross-Origin-Embedder-Policy', 'unsafe-none');
-}
-
-if (frontendDir) {
-  app.use(express.static(frontendDir, {
-    index: false,
-    setHeaders: (res, filePath) => {
-      setGoogleCompatibleHeaders(res);
-      if (filePath.endsWith('index.html')) {
-        res.set('Cache-Control', 'no-cache, no-store, must-revalidate');
-        res.set('Pragma', 'no-cache');
-        res.set('Expires', '0');
-      }
-    },
+if (adminIndexExists) {
+  logger.info(`Admin dashboard found: ${adminDist}`);
+  function setGoogleCompatibleHeaders(res) {
+    res.setHeader('Cross-Origin-Opener-Policy', 'unsafe-none');
+    res.setHeader('Cross-Origin-Embedder-Policy', 'unsafe-none');
+  }
+  app.use('/admin', express.static(adminDist, {
+    setHeaders: setGoogleCompatibleHeaders,
   }));
+  app.get('/admin', (req, res) => {
+    setGoogleCompatibleHeaders(res);
+    res.sendFile(path.join(adminDist, 'index.html'));
+  });
+  app.get('/admin/*', (req, res) => {
+    setGoogleCompatibleHeaders(res);
+    res.sendFile(path.join(adminDist, 'index.html'));
+  });
+  logger.info('Admin dashboard routes enabled at /admin');
+} else {
+  logger.info('Admin dashboard not built — /admin routes disabled');
 }
-app.use(express.static(frontendPublic, {
-  index: false,
-  setHeaders: setGoogleCompatibleHeaders,
-}));
 
-// SPA catch-all (MUST be last non-error route)
+// Return 404 for any non-API route that doesn't match
 app.get('*', (req, res) => {
-  setGoogleCompatibleHeaders(res);
   if (req.path.startsWith('/api')) {
-    return res.status(404).json({ message: 'API route not found' });
+    res.status(404).json({ message: 'API route not found' });
+  } else {
+    res.status(200).json({
+      service: 'prakruthi-bags-api',
+      status: 'running',
+      docs: 'https://prakurthi-bags.onrender.com/api/health',
+      note: 'Frontend is deployed separately at https://prakruthi-bags-frontend.onrender.com'
+    });
   }
-  if (req.path === '/favicon.ico') {
-    const favicon = path.join(frontendPublic, 'favicon.ico');
-    if (fs.existsSync(favicon)) return res.sendFile(favicon);
-    return res.status(204).end();
-  }
-  if (frontendDir) {
-    const indexHtml = path.join(frontendDir, 'index.html');
-    if (fs.existsSync(indexHtml)) {
-      res.set('Cache-Control', 'no-cache, no-store, must-revalidate');
-      res.set('Pragma', 'no-cache');
-      res.set('Expires', '0');
-      return res.sendFile(indexHtml);
-    }
-  }
-  logger.error(`SPA fallback: index.html not found — no frontend build directory exists.`);
-  logger.error('  Run the build: cd frontend && npm install && npm run build');
-  res.status(200).send(
-    '<!DOCTYPE html><html><head><meta charset="utf-8"><meta http-equiv="refresh" content="5;url=/"></head><body style="display:flex;justify-content:center;align-items:center;height:100vh;margin:0;font-family:system-ui;background:#f0f7f1"><div style="text-align:center;padding:40px"><h2 style="color:#2E5A44">Prakruthi Bags</h2><p style="color:#666">The application is being deployed. This page will refresh automatically.</p><p style="color:#999;font-size:13px;margin-top:20px"><a href="/" style="color:#2E5A44">Click here if it doesn\'t reload</a></p></div></body></html>'
-  );
 });
 
 // ---------------------------------------------------------------------------
